@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""
+Telegram бот с асинхронной проверкой прокси
+Поддерживает SOCKS5 и HTTP прокси
+"""
+
+import asyncio
+import logging
+import os
+from typing import Dict, List, Optional
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiohttp import ClientSession, TCPConnector
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения
+load_dotenv()
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Токен бота
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    logger.error("❌ BOT_TOKEN не найден!")
+    exit(1)
+
+# Список прокси
+PROXY_LIST = [
+    # HTTP прокси
+    "http://46.225.29.180:443",
+    "http://142.54.189.109:443",
+    "http://107.150.34.100:443",
+    "http://45.90.13.34:443",
+    "http://116.203.134.165:443",
+    "http://178.104.98.160:443",
+    "http://144.31.136.0:59877",
+    "http://vaticanic.top:8443",
+    "http://93.189.228.56:443",
+    "http://78.17.8.163:443",
+    "http://rkn.tg:853",
+    "http://91.107.189.181:8443",
+    "http://91.107.169.174:8443",
+    "http://57.129.121.20:443",
+    "http://23.88.51.230:443",
+    "http://93.183.88.188:443",
+    "http://tg.scroogevpn.com:443",
+    "http://proxy-sosavpn.ru:8443",
+    "http://t1.staxel.top:443",
+    "http://80.253.251.46:8443",
+    "http://mt.hq-vpn.com:8443",
+    "http://s17.sosproxy.space:443",
+    "http://72.56.236.90:443",
+    "http://65.21.58.190:8080",
+    "http://65.109.249.8:8080",
+    "http://tg.onespeed.cloud:7443",
+    # SOCKS5 прокси
+    "socks5://46.225.29.180:443",
+    "socks5://142.54.189.109:443",
+    "socks5://107.150.34.100:443",
+    "socks5://45.90.13.34:443",
+    "socks5://116.203.134.165:443",
+    "socks5://178.104.98.160:443",
+    "socks5://144.31.136.0:59877",
+    "socks5://vaticanic.top:8443",
+    "socks5://93.189.228.56:443",
+    "socks5://78.17.8.163:443",
+    "socks5://rkn.tg:853",
+    "socks5://91.107.189.181:8443",
+    "socks5://91.107.169.174:8443",
+    "socks5://57.129.121.20:443",
+    "socks5://23.88.51.230:443",
+    "socks5://93.183.88.188:443",
+    "socks5://tg.scroogevpn.com:443",
+    "socks5://proxy-sosavpn.ru:8443",
+    "socks5://t1.staxel.top:443",
+    "socks5://80.253.251.46:8443",
+    "socks5://mt.hq-vpn.com:8443",
+    "socks5://s17.sosproxy.space:443",
+    "socks5://72.56.236.90:443",
+    "socks5://65.21.58.190:8080",
+    "socks5://65.109.249.8:8080",
+    "socks5://tg.onespeed.cloud:7443",
+]
+
+# ==================== АСИНХРОННАЯ ПРОВЕРКА ПРОКСИ ====================
+
+
+async def test_single_proxy(proxy_url: str, bot_token: str) -> Dict:
+    """
+    Проверяет один прокси асинхронно
+    Возвращает словарь с результатом
+    """
+    result = {
+        "proxy": proxy_url,
+        "working": False,
+        "error": None,
+        "type": "http" if proxy_url.startswith("http") else "socks5",
+    }
+
+    try:
+        # HTTP/HTTPS прокси
+        if proxy_url.startswith("http://") or proxy_url.startswith("https://"):
+            connector = TCPConnector()
+            async with ClientSession(connector=connector) as session:
+                async with session.get(
+                    f"https://api.telegram.org/bot{bot_token}/getMe",
+                    proxy=proxy_url,
+                    timeout=10,
+                ) as response:
+                    if response.status == 200:
+                        result["working"] = True
+                        logger.info(f"✅ {proxy_url} - РАБОТАЕТ")
+                    else:
+                        result["error"] = f"HTTP {response.status}"
+                        logger.debug(f"❌ {proxy_url} - {result['error']}")
+
+        # SOCKS5 прокси
+        elif proxy_url.startswith("socks5://"):
+            try:
+                from aiohttp_socks import ProxyConnector
+
+                connector = ProxyConnector.from_url(proxy_url)
+                async with ClientSession(connector=connector) as session:
+                    async with session.get(
+                        f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10
+                    ) as response:
+                        if response.status == 200:
+                            result["working"] = True
+                            logger.info(f"✅ {proxy_url} - РАБОТАЕТ")
+                        else:
+                            result["error"] = f"SOCKS5 {response.status}"
+                            logger.debug(f"❌ {proxy_url} - {result['error']}")
+            except ImportError:
+                result["error"] = "aiohttp_socks не установлен"
+                logger.debug(f"⚠️ {proxy_url} - {result['error']}")
+            except Exception as e:
+                result["error"] = str(e)[:50]
+                logger.debug(f"❌ {proxy_url} - {result['error']}")
+
+    except asyncio.TimeoutError:
+        result["error"] = "таймаут"
+        logger.debug(f"⏰ {proxy_url} - {result['error']}")
+    except Exception as e:
+        result["error"] = str(e)[:50]
+        logger.debug(f"❌ {proxy_url} - {result['error']}")
+
+    return result
+
+
+async def test_proxies_parallel(proxies: List[str], bot_token: str) -> List[Dict]:
+    """
+    Проверяет все прокси параллельно
+    """
+    logger.info(f"🔍 Параллельная проверка {len(proxies)} прокси...")
+
+    # Создаём задачи для всех прокси
+    tasks = [test_single_proxy(proxy, bot_token) for proxy in proxies]
+
+    # Запускаем все проверки параллельно
+    results = await asyncio.gather(*tasks)
+
+    # Фильтруем рабочие
+    working = [r for r in results if r["working"]]
+
+    logger.info(f"📊 Проверено: {len(results)} | Рабочих: {len(working)}")
+
+    return results
+
+
+async def find_working_proxy_parallel() -> Optional[str]:
+    """
+    Находит первый рабочий прокси асинхронно
+    """
+    # Проверяем наличие библиотеки для SOCKS5
+    try:
+        import aiohttp_socks
+
+        logger.info("✅ aiohttp_socks установлен, проверяем все прокси")
+    except ImportError:
+        logger.warning("⚠️ aiohttp_socks не установлен, проверяем только HTTP прокси")
+        # Фильтруем только HTTP прокси
+        global PROXY_LIST
+        PROXY_LIST = [p for p in PROXY_LIST if p.startswith("http")]
+
+    # Параллельная проверка
+    results = await test_proxies_parallel(PROXY_LIST, BOT_TOKEN)
+
+    # Находим первый рабочий
+    for result in results:
+        if result["working"]:
+            return result["proxy"]
+
+    return None
+
+
+# ==================== СОЗДАНИЕ БОТА ====================
+
+
+async def create_bot_with_proxy() -> (
+    tuple[Optional[Bot], Optional[Dispatcher], Optional[str]]
+):
+    """Создаёт бота с рабочим прокси"""
+
+    # Параллельный поиск рабочего прокси
+    proxy = await find_working_proxy_parallel()
+
+    if not proxy:
+        # Если нет прокси, пробуем запустить без прокси
+        logger.info("🔄 Пробуем запустить бота без прокси...")
+        try:
+            bot = Bot(token=BOT_TOKEN)
+            dp = Dispatcher()
+            await bot.get_me()
+            logger.info("✅ Бот работает без прокси")
+            return bot, dp, None
+        except Exception as e:
+            logger.error(f"❌ Без прокси тоже не работает: {e}")
+            return None, None, None
+
+    # Запускаем с прокси
+    logger.info(f"✅ Используем прокси: {proxy}")
+
+    try:
+        if proxy.startswith("socks5://"):
+            from aiohttp_socks import ProxyConnector
+
+            connector = ProxyConnector.from_url(proxy)
+            session = AiohttpSession(connector=connector)
+        else:
+            connector = TCPConnector()
+            session = AiohttpSession(connector=connector, proxy=proxy)
+
+        bot = Bot(token=BOT_TOKEN, session=session)
+        dp = Dispatcher()
+
+        # Проверяем что бот работает
+        await bot.get_me()
+        return bot, dp, proxy
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания бота с прокси: {e}")
+        return None, None, None
+
+
+# ==================== КЛАВИАТУРА ====================
+
+
+def get_test_keyboard():
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🔘 Тест", callback_data="test")]]
+    )
+    return keyboard
+
+
+# ==================== ОБРАБОТЧИКИ ====================
+
+
+async def setup_handlers(dp: Dispatcher):
+    @dp.message(Command("start"))
+    async def cmd_start(message: types.Message):
+        await message.answer(
+            "🤖 Бот работает!\n\nНажми на кнопку 👇",
+            reply_markup=get_test_keyboard(),
+        )
+
+    @dp.callback_query(lambda c: c.data == "test")
+    async def handle_test(callback: types.CallbackQuery):
+        await callback.answer()
+        await callback.message.answer("✅ Тест! Бот работает!")
+
+
+# ==================== ЗАПУСК ====================
+
+
+async def main():
+    print("=" * 50)
+    print("🚀 Асинхронный бот с проверкой прокси")
+    print("=" * 50)
+
+    # Проверяем наличие aiohttp_socks
+    try:
+        import aiohttp_socks
+
+        print(f"✅ aiohttp_socks установлен (для SOCKS5)")
+    except ImportError:
+        print("⚠️ aiohttp_socks НЕ установлен (только HTTP прокси)")
+        print("   Установите: pip install aiohttp_socks")
+
+    print(f"📡 Прокси для проверки: {len(PROXY_LIST)}")
+    print("=" * 50)
+
+    bot, dp, proxy = await create_bot_with_proxy()
+
+    if not bot:
+        print("❌ Не удалось запустить бота!")
+        return
+
+    if proxy:
+        print(f"✅ Бот запущен с прокси: {proxy}")
+    else:
+        print("✅ Бот запущен без прокси (прямое соединение)")
+
+    print("🤖 Бот готов к работе!")
+    print("=" * 50)
+
+    await setup_handlers(dp)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

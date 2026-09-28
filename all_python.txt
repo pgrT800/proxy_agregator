@@ -1,0 +1,3662 @@
+import asyncio
+import string
+
+
+class CheckerHttp:
+
+    async def check_proxy(self, host: str, port) -> bool:
+        """
+        proxy: "ip:port"
+        """
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, int(port)), timeout=7
+            )
+            writer.close()
+            await writer.wait_closed()
+            # print(f"host {host} is alive")
+            return True
+        except:
+            # print(f"host {host} is dead")
+            return False
+import asyncio
+import os
+import queue
+import sys
+from asyncio.tasks import FIRST_COMPLETED
+from multiprocessing import Semaphore
+from sqlite3 import connect
+from unittest import result
+
+from typing_extensions import final
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+import aiohttp
+from aiohttp import *
+
+# from dopAbulity.abulity import CheckerHttp
+from function.function import GitHttp
+from pydantic import validator
+from requests import session
+from validator.validator import Validator
+
+from worker.dopAbulity.abulity import CheckerHttp
+
+
+async def defalt_worker(source, gitHttp, session, Semaphore):
+    async with Semaphore:
+        print(f"work with {source}")
+
+        list_pro = await gitHttp.get_content(source, session)
+
+        return list_pro
+
+
+async def defalt_worker_checker(data_check, checker, session, Semaphore):
+    async with Semaphore:
+        host, port = data_check.split(":")
+        result = await checker.check_proxy(host, port)
+        data_result = [host, port, result]
+        return data_result
+
+
+async def defalt_worker_validator(data_check_proxy, validator, session, Semaphore):
+    async with Semaphore:
+        host, port = data_check_proxy.split(":")
+
+        result_validate = await validator.check_proxy_target(host, port)
+    return result_validate
+
+
+async def tastManager(pul_source, session, Semaphore, condition):
+    list_tast_start = []
+    checker = CheckerHttp()
+    gitHttp = GitHttp()
+    validator = Validator()
+    if condition == "work_data":
+        for tast in pul_source:
+            task = asyncio.create_task(defalt_worker(tast, gitHttp, session, Semaphore))
+            list_tast_start.append(task)
+        return list_tast_start
+    elif condition == "checker":
+        for tast in pul_source:
+            task = asyncio.create_task(
+                defalt_worker_checker(tast, checker, session, Semaphore)
+            )
+            list_tast_start.append(task)
+        return list_tast_start
+    elif condition == "validator":
+        for proxy_data in pul_source:
+            if isinstance(proxy_data, list):
+                proxy_data = f"{proxy_data[0]}:{proxy_data[1]}"
+            task = asyncio.create_task(
+                defalt_worker_validator(proxy_data, validator, session, Semaphore)
+            )
+            list_tast_start.append(task)
+        return list_tast_start
+
+
+async def formateringData(data):
+    list_clean_data_zip = []
+    for i in data:
+        if i != None and len(i) > 1:
+            for item in i:
+                list_clean_data_zip.append(item)
+        else:
+            continue
+    return list_clean_data_zip
+
+
+async def initizilization(source_start, Semaphore, condition):
+    session = aiohttp.ClientSession()
+    try:
+        globals_result = None
+        if condition == "work_data":
+            list_task = await tastManager(
+                source_start, session, Semaphore, condition=condition
+            )
+            if list_task != None:
+                result_task = await asyncio.gather(*list_task)
+                globals_result = result_task
+                await session.close()
+            else:
+                print("Error create task pul")
+        elif condition == "checker":
+            list_task = await tastManager(
+                source_start, session, Semaphore, condition=condition
+            )
+
+            if list_task != None:
+                result_task = await asyncio.gather(*list_task)
+                globals_result = result_task
+                await session.close()
+            else:
+                print("Error create task pul for checker")
+
+        elif condition == "validator":
+            list_task = await tastManager(
+                source_start, session, Semaphore, condition=condition
+            )
+            if list_task != None:
+                result_task_validator = await asyncio.gather(*list_task)
+                globals_result = result_task_validator
+                await session.close()
+            else:
+                print("Error create task pul for checker")
+
+        if condition == "work_data":
+            result_clean = await formateringData(result_task)
+
+            return result_clean
+
+        elif condition == "checker":
+            result_cheker = globals_result
+            await session.close()
+            return result_cheker
+        elif condition == "validator":
+            result_validate = result_task_validator
+            await session.close()
+            return result_validate
+    finally:
+        await session.close()
+
+
+async def core(source_work):
+    print(f"PodWorker startin with sources = {len(source_work)}")
+    list_test = ["work_data", "checker", "validator"]
+    result_working_data = None  # инициализируем
+    list_finally_validata_result = None
+    Semaphore = asyncio.Semaphore(150)
+    for i in list_test:
+        print(f"Stage = {i}")
+
+        if i == "work_data":
+            result_working_data = await initizilization(
+                source_work, Semaphore, condition=i
+            )
+            if result_working_data != None:
+                print(f"Данные получены: {len(result_working_data)} прокси")
+
+        elif i == "checker":
+
+            if result_working_data:
+                result_working_data = await initizilization(
+                    result_working_data, Semaphore, condition=i
+                )
+                # print("Результат проверки:")
+                if result_working_data != None:
+                    list_alive = []
+
+                    for proxy in result_working_data:
+                        if proxy[2] == True:
+                            list_alive.append(proxy)
+
+                    result_working_data = list_alive
+            else:
+                print("Нет данных для проверки")
+
+        elif i == "validator":
+            # print("Start validator")
+
+            if result_working_data:
+
+                list_clean_for_validate_stage = []
+                for proxy_2d in result_working_data:
+                    ip_port = f"{proxy_2d[0]}:{proxy_2d[1]}"
+                    # print(ip_port)
+                    list_clean_for_validate_stage.append(ip_port)
+
+                list_finally_validata_result = await initizilization(
+                    list_clean_for_validate_stage, Semaphore, condition=i
+                )
+                if list_finally_validata_result != None:
+
+                    print(f"PodWorker ending work with sources = {source_work}")
+                    # return result_working_validate
+
+                    return list_finally_validata_result
+
+                # result_working_validate = await initizilization(
+                #     list_clean_for_validate_stage, Semaphore, condition=i
+                # )
+                # if result_working_validate != None:
+                #     # for i in result_working_validate:
+                #     # if i != False:
+                #
+                #     # print(i)
+                #     print(f"PodWorker ending work with sources = {source_work}")
+                #     return result_working_validate
+                #
+
+
+async def worker_http(HTTP_SOURCES, queue_http):
+    sources = HTTP_SOURCES
+    # mid = (len(source) + 1) // 2
+    # list_one, list_two = source[:mid], source[mid:]  # два списка в кортеже
+    # print(len(list_one), len(list_two))
+
+    groups = []
+
+    for i in range(0, len(sources), 2):
+        if i + 1 < len(sources):
+            # Есть пара
+            groups.append([sources[i], sources[i + 1]])
+        else:
+            # Одинокий элемент — добавляем к последней группе
+            if groups:
+                groups[-1].append(sources[i])
+            else:
+                groups.append([sources[i]])
+
+    for i in groups:
+        print(len(i), i)
+
+    list_tasks = []
+    for i in groups:
+        task = asyncio.create_task(core(i))
+        list_tasks.append(task)
+    # task = asyncio.create_task(core(list_one))
+    # task2 = asyncio.create_task(core(list_two))
+    pending = set(list_tasks)  # все задачи
+    results = []
+
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=FIRST_COMPLETED)
+        for task in done:
+            result = task.result()
+            results.append(result)
+            item = {"http": result}
+            await queue_http.put(item)
+            print(f"Завершено,данные отданы, осталось: {len(pending)}")
+    await queue_http.put("Done")
+    # return results
+    # completed = 0
+    # total = len(list_tasks)
+    # #
+    # # Ждём любую задачу и сразу обрабатываем
+    # while completed < total:
+    #     # Ждём первую завершённую задачу
+    #     done, pending = await asyncio.wait(
+    #         [*list_tasks], return_when=asyncio.FIRST_COMPLETED
+    #     )
+    #
+    #     for task in done:
+    #         result = task.result()
+    #
+    #         print(f"Задача завершена result , осталось  = {len(pending)}")
+    #
+    #     completed += 1
+    # result = await asyncio.gather(*list_tasks)
+
+    # print(f"result core work{result}")
+    # return (result[0] or []) + (result[1] or [])
+    # Объединяем два списка в один
+    # combined = []
+    # for item in result:
+    #     if item and isinstance(item, list):
+    #         combined.extend(item)
+    #
+    # return combined  # ← возвращаем плоский список
+    #
+
+
+HTTP_SOURCES = [
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/GoekhanDev/free-proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://raw.githubusercontent.com/opsxcq/proxy-list/master/list.txt",
+    "https://raw.githubusercontent.com/ALIILAPRO/Proxy/refs/heads/main/http.txt",
+]
+# asyncio.run(worker_http(HTTP_SOURCES, queue))
+#!/usr/bin/env python3
+import asyncio
+from typing import List, Optional, Tuple
+
+import aiohttp
+
+
+class ProxyValidator:
+    def __init__(self, target_url: str = "http://t.me", timeout: int = 5):
+        self.target_url = target_url
+        self.timeout = timeout
+
+    async def check_proxy(self, host: str, port: str) -> bool:
+        """Проверяет прокси через целевой ресурс"""
+        proxy_url = f"http://{host}:{port}"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self.target_url,
+                    proxy=proxy_url,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    ssl=False,
+                ) as resp:
+                    return resp.status in (200, 301, 302, 307, 308)
+        except Exception as e:
+            # print(f"Ошибка {host}:{port} -> {type(e).__name__}")
+            return False
+
+    async def check_batch(
+        self, proxies: List[Tuple[str, str]]
+    ) -> List[Tuple[str, str, bool]]:
+        """Проверяет список прокси параллельно"""
+        semaphore = asyncio.Semaphore(50)  # ограничение одновременных проверок
+
+        async def check_one(host, port):
+            async with semaphore:
+                result = await self.check_proxy(host, port)
+                return (host, port, result)
+
+        tasks = [check_one(host, port) for host, port in proxies]
+        results = await asyncio.gather(*tasks)
+        return results
+
+
+async def main():
+    # Данные прокси (из твоего вывода)
+    proxies_data = [
+        ("77.76.202.157", "80"),
+        ("149.56.12.18", "80"),
+        ("216.117.195.93", "80"),
+        ("204.57.112.5", "80"),
+        ("147.161.210.140", "8800"),
+        ("178.212.144.7", "80"),
+        ("149.56.35.153", "80"),
+        ("20.78.26.206", "8561"),
+        ("45.12.151.226", "2829"),
+        ("95.213.217.168", "52004"),
+        ("185.135.69.34", "80"),
+        ("103.125.31.222", "80"),
+        ("51.68.124.241", "80"),
+        ("13.230.49.39", "8080"),
+        ("167.103.31.122", "8800"),
+        ("43.200.30.144", "80"),
+        ("45.140.147.82", "1082"),
+        ("221.132.18.38", "80"),
+        ("83.142.126.147", "80"),
+        ("180.250.219.58", "53281"),
+        ("167.103.144.127", "8800"),
+        ("43.252.214.195", "80"),
+        ("185.187.92.42", "80"),
+        ("43.99.54.236", "5555"),
+        ("51.79.135.131", "8080"),
+        ("34.96.238.40", "8080"),
+        ("191.101.1.116", "80"),
+        ("16.163.88.228", "80"),
+        ("141.98.153.86", "80"),
+        ("160.191.17.64", "8888"),
+    ]
+
+    print(f"🔍 Проверка {len(proxies_data)} прокси через {target_url}")
+    print("=" * 60)
+
+    validator = ProxyValidator(target_url="http://t.me", timeout=5)
+    results = await validator.check_batch(proxies_data)
+
+    alive = []
+    dead = []
+
+    for host, port, status in results:
+        if status:
+            alive.append((host, port))
+            print(f"✅ {host}:{port} — ДОСТУПЕН")
+        else:
+            dead.append((host, port))
+            print(f"❌ {host}:{port} — НЕ ДОСТУПЕН")
+
+    print("\n" + "=" * 60)
+    print(f"📊 ИТОГО: {len(alive)} живых, {len(dead)} мёртвых")
+
+    # Сохраняем живые прокси
+    if alive:
+        with open("alive_proxies.txt", "w") as f:
+            for host, port in alive:
+                f.write(f"{host}:{port}\n")
+        print(f"💾 Живые прокси сохранены в alive_proxies.txt")
+
+
+if __name__ == "__main__":
+    target_url = "http://t.me"  # можно заменить на https://t.me, http://httpbin.org/ip
+    asyncio.run(main())
+import asyncio
+from asyncio.timeouts import timeout
+
+import aiohttp
+
+
+class Validator:
+
+    async def check_proxy_target(self, host, port):
+        proxy_url = f"http://{host}:{port}"
+        list_service = [
+            "http://t.me",
+            "http://instagram.com",  # Исправил опечатку: было instagramm.com
+            "http://youtube.com",
+            "http://facebook.com",
+            "http://rutracker.org",
+            "https://api.zoomeye.org",
+            "http://web.whatsapp.com",
+        ]
+
+        list_task = []
+        # Добавляем задачу для проверки t.me, как и для всех остальных
+        for service in list_service:
+            task = asyncio.create_task(self._check_url(proxy_url, service))
+            list_task.append(task)
+
+        # Ждём выполнения всех задач
+        results = await asyncio.gather(*list_task)
+
+        # Формируем и возвращаем словарь
+        data = {
+            "telegram": results[0],
+            "instagram": results[1],
+            "youtube": results[2],
+            "facebook": results[3],
+            "rutracker": results[4],
+            "zoomeye": results[5],
+            "whatsapp": results[6],
+            "host:port:type": proxy_url,
+        }
+        return data
+
+    async def _check_url(self, proxy_url, target_url):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    target_url,
+                    proxy=proxy_url,
+                    timeout=7,
+                    ssl=False,
+                    allow_redirects=True,
+                ) as resp:
+                    # 200 — OK
+                    # 301/302 — редирект, тоже OK
+                    # 400/405 — прокси не поддерживает этот тип запроса
+                    return resp.status in (200, 301, 302)
+        except Exception as e:
+            # print(f"except is {e}")
+            return False
+
+
+#
+# async def main():
+#     validator = Validator()
+#     with open(
+#         "/home/admin/programmer-project/pythonProject/proxy_generate/alive_proxies_http.txt",
+#         "r",
+#     ) as f:
+#         # content = f.read()
+#         lines = f.readlines()
+#     # print(content)
+#     for i in lines:
+#         host, port = i.split(":")
+#         # print(f"host = {host}, port = {port}")
+#         result = await validator.check_proxy_target(host, port)
+#         print(f"host = {host}, port = {port}, result = {result}")
+#
+#
+# asyncio.run(main())
+import asyncio
+
+
+class GitHttp:
+    async def get_content(self, source, session):
+        print(f"get {source}")
+        list_proxis = []
+        async with session.get(source) as response:
+            text = await response.text()
+            proxies = text.strip().split("\n")
+            # print(proxies, "\n")
+
+            for i in proxies:
+                list_proxis.append(i)
+                # print(f"apeend elemen {i}")
+        return list_proxis
+import asyncio
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class CheckerSocks5:
+    async def check_proxy(self, host: str, port: int):
+        """
+        Проверяет SOCKS5 прокси через реальное подключение
+        """
+        proxy_url = f"socks5://{host}:{port}"
+
+        try:
+            connector = ProxyConnector.from_url(proxy_url)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.get(
+                    "http://httpbin.org/ip", timeout=10  # или любой другой сайт
+                ) as response:
+                    if response.status == 200:
+                        # print(f"SOCKS5 {host}:{port} is alive")
+                        return True
+        except Exception as e:
+            # print(f"SOCKS5 {host}:{port} is dead - {e}")
+
+            return False
+import asyncio
+import os
+import sys
+from asyncio.tasks import FIRST_COMPLETED
+from multiprocessing import Semaphore
+from sqlite3 import connect
+from unittest import result
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import aiohttp
+from aiohttp import *
+
+# from dopAbulity.abulity import CheckerSocks5
+from function.function import GitHttp
+from pydantic import validator
+from requests import session
+
+from worker_socks.dopAbulity.abulity import CheckerSocks5
+
+# from validator.validator import Validator
+from worker_socks.validator.validator import Validator
+
+SOCKS5_SOURCES = [
+    "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+    "https://raw.githubusercontent.com/GoekhanDev/free-proxy-list/main/socks5.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/socks5.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt",
+]
+
+
+async def defalt_worker(source, gitHttp, session, Semaphore):
+    async with Semaphore:
+        print(f"work with {source}")
+
+        list_pro = await gitHttp.get_content(source, session)
+
+        return list_pro
+
+
+async def defalt_worker_checker(data_check, checker, session, Semaphore):
+    async with Semaphore:
+        host, port = data_check.split(":")
+        result = await checker.check_proxy(host, port)
+        data_result = [host, port, result]
+        return data_result
+
+
+async def defalt_worker_validator(data_check_proxy, validator, session, Semaphore):
+    async with Semaphore:
+        host, port = data_check_proxy.split(":")
+
+        result_validate = await validator.check_proxy_target(host, port)
+    return result_validate
+
+
+async def tastManager(pul_source, session, Semaphore, condition):
+    list_tast_start = []
+    checker = CheckerSocks5()
+    gitHttp = GitHttp()
+    validator = Validator()
+    if condition == "work_data":
+        for tast in pul_source:
+            task = asyncio.create_task(defalt_worker(tast, gitHttp, session, Semaphore))
+            list_tast_start.append(task)
+        return list_tast_start
+    elif condition == "checker":
+        for tast in pul_source:
+            task = asyncio.create_task(
+                defalt_worker_checker(tast, checker, session, Semaphore)
+            )
+            list_tast_start.append(task)
+        return list_tast_start
+    elif condition == "validator":
+        for proxy_data in pul_source:
+            if isinstance(proxy_data, list):
+                proxy_data = f"{proxy_data[0]}:{proxy_data[1]}"
+            task = asyncio.create_task(
+                defalt_worker_validator(proxy_data, validator, session, Semaphore)
+            )
+            list_tast_start.append(task)
+        return list_tast_start
+
+
+async def formateringData(data):
+    list_clean_data_zip = []
+    for i in data:
+        if i != None and len(i) > 1:
+            for item in i:
+                list_clean_data_zip.append(item)
+        else:
+            continue
+    return list_clean_data_zip
+
+
+async def initizilization(source_start, Semaphore, condition):
+    session = aiohttp.ClientSession()
+
+    globals_result = None
+    if condition == "work_data":
+        list_task = await tastManager(
+            source_start, session, Semaphore, condition=condition
+        )
+        if list_task != None:
+            result_task = await asyncio.gather(*list_task)
+            globals_result = result_task
+            await session.close()
+        else:
+            print("Error create task pul")
+    elif condition == "checker":
+        list_task = await tastManager(
+            source_start, session, Semaphore, condition=condition
+        )
+
+        if list_task != None:
+            result_task = await asyncio.gather(*list_task)
+            globals_result = result_task
+            await session.close()
+        else:
+            print("Error create task pul for checker")
+
+    elif condition == "validator":
+        list_task = await tastManager(
+            source_start, session, Semaphore, condition=condition
+        )
+        if list_task != None:
+            result_task_validator = await asyncio.gather(*list_task)
+            globals_result = result_task_validator
+            await session.close()
+        else:
+            print("Error create task pul for checker")
+
+    if condition == "work_data":
+        result_clean = await formateringData(result_task)
+
+        return result_clean
+
+    elif condition == "checker":
+        result_cheker = globals_result
+        await session.close()
+        return result_cheker
+    elif condition == "validator":
+        result_validate = result_task_validator
+        await session.close()
+        return result_validate
+
+
+async def core(source_work):
+    print(f"PodWorker startin with sources = {len(source_work)}")
+
+    list_test = ["work_data", "checker", "validator"]
+    result_working_data = None  # инициализируем
+    list_finally_validata_result = None
+    Semaphore = asyncio.Semaphore(150)
+    for i in list_test:
+        print(f"Stage = {i}")
+
+        if i == "work_data":
+            result_working_data = await initizilization(
+                source_work, Semaphore, condition=i
+            )
+            if result_working_data != None:
+                print(f"Данные получены: {len(result_working_data)} прокси")
+
+        elif i == "checker":
+
+            if result_working_data:
+                result_working_data = await initizilization(
+                    result_working_data, Semaphore, condition=i
+                )
+                # print("Результат проверки:")
+                if result_working_data != None:
+                    list_alive = []
+
+                    for proxy in result_working_data:
+                        if proxy[2] == True:
+                            list_alive.append(proxy)
+
+                    result_working_data = list_alive
+            else:
+                print("Нет данных для проверки")
+
+        elif i == "validator":
+            # print("Start validator")
+
+            if result_working_data:
+
+                list_clean_for_validate_stage = []
+                for proxy_2d in result_working_data:
+                    ip_port = f"{proxy_2d[0]}:{proxy_2d[1]}"
+                    # print(ip_port)
+                    list_clean_for_validate_stage.append(ip_port)
+
+                list_finally_validata_result = await initizilization(
+                    list_clean_for_validate_stage, Semaphore, condition=i
+                )
+                if list_finally_validata_result != None:
+
+                    print(f"PodWorker ending work with sources = {source_work}")
+                    # return result_working_validate
+
+                    return list_finally_validata_result
+
+
+async def worker_socks5(SOCKS5_SOURCES, queue_socks):
+    sources = SOCKS5_SOURCES
+
+    groups = []
+
+    for i in range(0, len(sources), 2):
+        if i + 1 < len(sources):
+            # Есть пара
+            groups.append([sources[i], sources[i + 1]])
+        else:
+            # Одинокий элемент — добавляем к последней группе
+            if groups:
+                groups[-1].append(sources[i])
+            else:
+                groups.append([sources[i]])
+
+    for i in groups:
+        print(len(i), i)
+
+    list_tasks = []
+    for i in groups:
+        task = asyncio.create_task(core(i))
+        list_tasks.append(task)
+    # task = asyncio.create_task(core(list_one))
+    # task2 = asyncio.create_task(core(list_two))
+    pending = set(list_tasks)  # все задачи
+    results = []
+
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=FIRST_COMPLETED)
+        for task in done:
+            result = task.result()
+            results.append(result)
+            # await queue_socks.put(result)
+            # print(f"Завершено,данные отданы, осталось: {len(pending)}")
+            # await queue_socks.put("Done")
+            item = {"socks": result}
+            await queue_socks.put(item)
+            print(f"Завершено,данные отданы, осталось: {len(pending)}")
+    await queue_socks.put("Done")
+#!/usr/bin/env python3
+import asyncio
+from typing import List, Optional, Tuple
+
+import aiohttp
+
+
+class ProxyValidator:
+    def __init__(self, target_url: str = "http://t.me", timeout: int = 5):
+        self.target_url = target_url
+        self.timeout = timeout
+
+    async def check_proxy(self, host: str, port: str) -> bool:
+        """Проверяет прокси через целевой ресурс"""
+        proxy_url = f"http://{host}:{port}"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self.target_url,
+                    proxy=proxy_url,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    ssl=False,
+                ) as resp:
+                    return resp.status in (200, 301, 302, 307, 308)
+        except Exception as e:
+            # print(f"Ошибка {host}:{port} -> {type(e).__name__}")
+            return False
+
+    async def check_batch(
+        self, proxies: List[Tuple[str, str]]
+    ) -> List[Tuple[str, str, bool]]:
+        """Проверяет список прокси параллельно"""
+        semaphore = asyncio.Semaphore(50)  # ограничение одновременных проверок
+
+        async def check_one(host, port):
+            async with semaphore:
+                result = await self.check_proxy(host, port)
+                return (host, port, result)
+
+        tasks = [check_one(host, port) for host, port in proxies]
+        results = await asyncio.gather(*tasks)
+        return results
+
+
+async def main():
+    # Данные прокси (из твоего вывода)
+    proxies_data = [
+        ("77.76.202.157", "80"),
+        ("149.56.12.18", "80"),
+        ("216.117.195.93", "80"),
+        ("204.57.112.5", "80"),
+        ("147.161.210.140", "8800"),
+        ("178.212.144.7", "80"),
+        ("149.56.35.153", "80"),
+        ("20.78.26.206", "8561"),
+        ("45.12.151.226", "2829"),
+        ("95.213.217.168", "52004"),
+        ("185.135.69.34", "80"),
+        ("103.125.31.222", "80"),
+        ("51.68.124.241", "80"),
+        ("13.230.49.39", "8080"),
+        ("167.103.31.122", "8800"),
+        ("43.200.30.144", "80"),
+        ("45.140.147.82", "1082"),
+        ("221.132.18.38", "80"),
+        ("83.142.126.147", "80"),
+        ("180.250.219.58", "53281"),
+        ("167.103.144.127", "8800"),
+        ("43.252.214.195", "80"),
+        ("185.187.92.42", "80"),
+        ("43.99.54.236", "5555"),
+        ("51.79.135.131", "8080"),
+        ("34.96.238.40", "8080"),
+        ("191.101.1.116", "80"),
+        ("16.163.88.228", "80"),
+        ("141.98.153.86", "80"),
+        ("160.191.17.64", "8888"),
+    ]
+
+    print(f"🔍 Проверка {len(proxies_data)} прокси через {target_url}")
+    print("=" * 60)
+
+    validator = ProxyValidator(target_url="http://t.me", timeout=5)
+    results = await validator.check_batch(proxies_data)
+
+    alive = []
+    dead = []
+
+    for host, port, status in results:
+        if status:
+            alive.append((host, port))
+            print(f"✅ {host}:{port} — ДОСТУПЕН")
+        else:
+            dead.append((host, port))
+            print(f"❌ {host}:{port} — НЕ ДОСТУПЕН")
+
+    print("\n" + "=" * 60)
+    print(f"📊 ИТОГО: {len(alive)} живых, {len(dead)} мёртвых")
+
+    # Сохраняем живые прокси
+    if alive:
+        with open("alive_proxies.txt", "w") as f:
+            for host, port in alive:
+                f.write(f"{host}:{port}\n")
+        print(f"💾 Живые прокси сохранены в alive_proxies.txt")
+
+
+if __name__ == "__main__":
+    target_url = "http://t.me"  # можно заменить на https://t.me, http://httpbin.org/ip
+    asyncio.run(main())
+import asyncio
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class Validator:
+
+    async def check_proxy_target(self, host, port):
+        proxy_url = f"socks5://{host}:{port}"  # ← меняем протокол
+        list_service = [
+            "http://t.me",
+            "http://instagram.com",
+            "http://youtube.com",
+            "http://facebook.com",
+            "http://rutracker.org",
+            "https://api.zoomeye.org",
+            "http://web.whatsapp.com",
+        ]
+
+        list_task = []
+        for service in list_service:
+            task = asyncio.create_task(self._check_url(proxy_url, service))
+            list_task.append(task)
+
+        results = await asyncio.gather(*list_task)
+
+        return {
+            "telegram": results[0],
+            "instagram": results[1],
+            "youtube": results[2],
+            "facebook": results[3],
+            "rutracker": results[4],
+            "zoomeye": results[5],
+            "whatsapp": results[6],
+            "host:port:type": proxy_url,
+        }
+
+    async def _check_url(self, proxy_url, target_url):
+        try:
+            connector = ProxyConnector.from_url(proxy_url)  # ← SOCKS5 connector
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.get(
+                    target_url,
+                    timeout=7,
+                    ssl=False,
+                    allow_redirects=True,
+                ) as resp:
+                    return resp.status in (200, 301, 302)
+        except Exception as e:
+            return False
+
+
+#
+# async def main():
+#     validator = Validator()
+#     with open(
+#         "/home/admin/programmer-project/pythonProject/proxy_generate/alive_proxies_http.txt",
+#         "r",
+#     ) as f:
+#         # content = f.read()
+#         lines = f.readlines()
+#     # print(content)
+#     for i in lines:
+#         host, port = i.split(":")
+#         # print(f"host = {host}, port = {port}")
+#         result = await validator.check_proxy_target(host, port)
+#         print(f"host = {host}, port = {port}, result = {result}")
+#
+#
+# asyncio.run(main())
+import asyncio
+
+
+class GitHttp:
+    async def get_content(self, source, session):
+        print(f"get {source}")
+        list_proxis = []
+        async with session.get(source) as response:
+            text = await response.text()
+            proxies = text.strip().split("\n")
+            # print(proxies, "\n")
+
+            for i in proxies:
+                list_proxis.append(i)
+                # print(f"apeend elemen {i}")
+        return list_proxis
+import asyncio
+import subprocess
+
+
+class CheckerTrojan:
+    def __init__(self, timeout: int = 8):
+        self.timeout = timeout
+
+    async def checker(self, proxy_dict: dict, semaphore) -> tuple:
+        async with semaphore:
+            result = await self._check_proxy(proxy_dict)
+            return (proxy_dict, result)
+
+    async def _check_proxy(self, proxy_dict: dict) -> bool:
+        """TCP проверка для Trojan"""
+        host = proxy_dict["host"]
+        port = proxy_dict["port"]
+
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=self.timeout
+            )
+            writer.close()
+            return True
+        except:
+            return False
+import asyncio
+import random
+import subprocess
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class ValidatorTrojan:
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+
+        # Список сервисов для проверки
+        self.services = [
+            ("telegram", "http://t.me"),
+            ("instagram", "http://instagram.com"),
+            ("youtube", "http://youtube.com"),
+            ("facebook", "http://facebook.com"),
+            ("rutracker", "http://rutracker.org"),
+            ("zoomeye", "https://api.zoomeye.org"),
+            ("whatsapp", "http://web.whatsapp.com"),
+        ]
+
+    async def validate_proxy(self, proxy_dict: dict, semaphore) -> dict:
+        """
+        Проверяет доступность сервисов через Trojan прокси
+
+        Принимает: {"host": "1.2.3.4", "port": 443, "password": "...", "sni": "...", "type": "trojan"}
+        Возвращает: {"telegram": True/False, "youtube": True/False, ...}
+        """
+        async with semaphore:
+            host = proxy_dict["host"]
+            port = proxy_dict["port"]
+            password = proxy_dict.get("password", "")
+            sni = proxy_dict.get("sni", host)
+
+            # Если есть пароль — проверяем через Trojan
+            if password:
+                result = await self._validate_via_trojan(host, port, password, sni)
+                return result
+
+            # Если нет пароля — пробуем как обычный SOCKS5/HTTP прокси
+            else:
+                result = await self._validate_via_direct(host, port)
+                return result
+
+    async def _validate_via_direct(self, host: str, port: int) -> dict:
+        """Проверяет прокси как обычный SOCKS5 или HTTP"""
+        results = {}
+
+        # Пробуем как SOCKS5
+        proxy_url = f"socks5://{host}:{port}"
+        try:
+            connector = ProxyConnector.from_url(proxy_url)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+        except:
+            # Пробуем как HTTP прокси
+            proxy_url = f"http://{host}:{port}"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    for name, url in self.services:
+                        try:
+                            async with session.get(
+                                url, proxy=proxy_url, timeout=self.timeout, ssl=False
+                            ) as resp:
+                                results[name] = resp.status in (200, 301, 302)
+                        except:
+                            results[name] = False
+            except:
+                for name, _ in self.services:
+                    results[name] = False
+
+        results["host"] = host
+        results["port"] = port
+        results["type"] = "direct"
+        results["proxy_url"] = proxy_url
+
+        return results
+
+    async def _validate_via_trojan(
+        self, host: str, port: int, password: str, sni: str = None
+    ) -> dict:
+        """Запускает trojan-client и проверяет все сервисы"""
+        local_port = random.randint(10000, 60000)
+
+        # Формируем конфиг для trojan
+        config = {
+            "run_type": "client",
+            "local_addr": "127.0.0.1",
+            "local_port": local_port,
+            "remote_addr": host,
+            "remote_port": port,
+            "password": [password],
+            "ssl": {
+                "sni": sni if sni else host,
+                "verify": False,
+                "verify_hostname": False,
+            },
+        }
+
+        import json
+        import tempfile
+
+        # Создаём временный файл конфига
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(config, f)
+            config_path = f.name
+
+        process = None
+        results = {}
+
+        try:
+            # Запускаем trojan-client
+            cmd = ["trojan", "-c", config_path]
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+            # Ждём запуска
+            if not await self._wait_for_port(local_port):
+                return self._empty_result(host, port, password)
+
+            # Проверяем все сервисы через локальный SOCKS5
+            connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+
+            # Возвращаем ВСЮ информацию
+            results["host"] = host
+            results["port"] = port
+            results["password"] = password
+            results["sni"] = sni if sni else host
+            results["type"] = "trojan"
+            results["proxy_url"] = f"socks5://{host}:{port}"
+
+            return results
+
+        except FileNotFoundError:
+            print("❌ trojan не установлен! Установи: sudo pacman -S trojan")
+            return self._empty_result(host, port, password)
+        except Exception as e:
+            print(f"❌ Ошибка Trojan валидации: {e}")
+            return self._empty_result(host, port, password)
+        finally:
+            # Убиваем процесс
+            if process and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except:
+                    process.kill()
+
+            # Удаляем временный файл
+            import os
+
+            try:
+                os.unlink(config_path)
+            except:
+                pass
+
+    def _empty_result(self, host: str, port: int, password: str = "") -> dict:
+        """Возвращает пустой результат с сохранением информации о прокси"""
+        return {
+            "telegram": False,
+            "instagram": False,
+            "youtube": False,
+            "facebook": False,
+            "rutracker": False,
+            "zoomeye": False,
+            "whatsapp": False,
+            "host": host,
+            "port": port,
+            "password": password,
+            "type": "trojan",
+            "proxy_url": f"socks5://{host}:{port}",
+        }
+
+    async def _wait_for_port(self, port: int, max_wait: int = 5) -> bool:
+        """Ждёт, пока порт начнёт слушать"""
+        for _ in range(max_wait):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", port), timeout=1
+                )
+                writer.close()
+                return True
+            except:
+                await asyncio.sleep(1)
+        return False
+import asyncio
+import os
+import re
+import sys
+import warnings
+from urllib.parse import parse_qs, urlparse
+
+from worker_shadowsocks.mWorkerTrojan.checker.checker import CheckerTrojan
+from worker_shadowsocks.mWorkerTrojan.validator.validator import ValidatorTrojan
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+def parse_trojan_url(line: str) -> dict | None:
+    """
+    Парсит trojan:// строку в словарь с host, port, password, sni и т.д.
+    Формат: trojan://password@host:port?allowInsecure=1&sni=example.com#name
+    """
+    line = line.strip()
+
+    # Пропускаем строки с другими протоколами
+    if any(x in line for x in ["vmess://", "vless://", "ss://", "ssr://"]):
+        return None
+
+    if not line.startswith("trojan://"):
+        return None
+
+    # Убираем trojan://
+    raw = line[9:]
+
+    # Убираем комментарий после #
+    if "#" in raw:
+        raw = raw.split("#")[0]
+
+    # Разделяем на часть до ? (основные параметры) и параметры
+    if "?" in raw:
+        base_part, query_part = raw.split("?", 1)
+        params = parse_qs(query_part)
+    else:
+        base_part = raw
+        params = {}
+
+    # Очищаем base_part от лишних символов в конце
+    base_part = base_part.rstrip("/")
+
+    # Парсим password@host:port
+    password = ""
+    host = ""
+    port = 443  # порт по умолчанию для Trojan
+
+    if "@" in base_part:
+        password, host_port = base_part.split("@", 1)
+        if ":" in host_port:
+            host, port_str = host_port.rsplit(":", 1)
+            # Очищаем port_str от нецифровых символов
+            port_str = re.sub(r"[^\d]", "", port_str)
+            try:
+                port = int(port_str)
+            except ValueError:
+                port = 443
+        else:
+            host = host_port
+    else:
+        # Если нет @, то вся строка это host:port
+        if ":" in base_part:
+            host, port_str = base_part.rsplit(":", 1)
+            port_str = re.sub(r"[^\d]", "", port_str)
+            try:
+                port = int(port_str)
+            except ValueError:
+                port = 443
+        else:
+            host = base_part
+
+    # Извлекаем параметры
+    sni = params.get("sni", [None])[0]
+    allow_insecure = params.get("allowInsecure", [False])[0] == "1"
+    security = params.get("security", ["tls"])[0]
+    type_ = params.get("type", ["tcp"])[0]
+
+    # Очищаем host от лишних символов
+    host = host.rstrip("/").lstrip("/")
+
+    result = {
+        "host": host,
+        "port": port,
+        "password": password,
+        "type": "trojan",
+    }
+
+    # Добавляем опциональные параметры
+    if sni:
+        result["sni"] = sni
+    if allow_insecure:
+        result["allow_insecure"] = allow_insecure
+    if security != "tls":
+        result["security"] = security
+    if type_ != "tcp":
+        result["type_protocol"] = type_
+
+    return result
+
+
+async def corteg_worker(proxy, semaphore, validator, queue, queue_name):
+    data = await validator.validate_proxy(proxy, semaphore)
+    # await queue.put(data)
+    if data is not None:
+        item = {queue_name: data}
+        await queue.put(item)
+    return data
+
+
+async def core_worker_trojan(list_proxis, queue, queue_name):
+    semaphore = asyncio.Semaphore(150)
+    checker = CheckerTrojan()
+
+    # Парсим прокси
+    list_proxis_clean = []
+    for line in list_proxis:
+        try:
+            proxy = parse_trojan_url(line)
+            if proxy is not None and proxy.get("host"):
+                list_proxis_clean.append(proxy)
+        except Exception as e:
+            print(f"Ошибка парсинга: {e}")
+            continue
+
+    print(f"✅ Распарсено Trojan прокси: {len(list_proxis_clean)}")
+
+    # Чекер (TCP проверка)
+    list_task_checker = []
+    for proxy in list_proxis_clean:
+        task = asyncio.create_task(checker.checker(proxy, semaphore))
+        list_task_checker.append(task)
+
+    result_checker = await asyncio.gather(*list_task_checker)
+
+    # Собираем живые прокси (где TCP порт открыт)
+    list_alive = []
+
+    for proxy, is_alive in result_checker:
+        if is_alive:
+            list_alive.append(proxy)
+            print(f"✅ TCP жив: {proxy['host']}:{proxy['port']}")
+
+    print(f"📊 Живых Trojan прокси (TCP): {len(list_alive)}")
+
+    validator = ValidatorTrojan()
+    list_task_validator = []
+
+    for proxy in list_alive:
+        task = asyncio.create_task(
+            corteg_worker(proxy, semaphore, validator, queue, queue_name)
+        )
+        list_task_validator.append(task)
+
+    await queue.put("Done")
+    return []
+import asyncio
+
+
+class CheckerVless:
+    def __init__(self, timeout: int = 8):
+        self.timeout = timeout
+
+    async def checker(self, proxy_dict: dict, semaphore) -> tuple:
+        """Проверяет VLESS прокси (TCP проверка)"""
+        async with semaphore:
+            result = await self._check_proxy(proxy_dict)
+            return (proxy_dict, result)
+
+    async def _check_proxy(self, proxy_dict: dict) -> bool:
+        """TCP проверка для VLESS"""
+        host = proxy_dict["host"]
+        port = proxy_dict["port"]
+
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=self.timeout
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except:
+            return False
+import asyncio
+import json
+import os
+import random
+import subprocess
+import tempfile
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class ValidatorVless:
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+
+        self.services = [
+            ("telegram", "http://t.me"),
+            ("instagram", "http://instagram.com"),
+            ("youtube", "http://youtube.com"),
+            ("facebook", "http://facebook.com"),
+            ("rutracker", "http://rutracker.org"),
+            ("zoomeye", "https://api.zoomeye.org"),
+            ("whatsapp", "http://web.whatsapp.com"),
+        ]
+
+    async def validate_proxy(self, proxy_dict: dict, semaphore) -> dict:
+        """Проверяет VLESS прокси через XRay"""
+        async with semaphore:
+            host = proxy_dict["host"]
+            port = proxy_dict["port"]
+            uuid = proxy_dict.get("uuid", "")
+
+            if not uuid:
+                return await self._validate_via_direct(host, port)
+
+            return await self._validate_via_xray(proxy_dict)
+
+    async def _validate_via_direct(self, host: str, port: int) -> dict:
+        """Проверяет как обычный SOCKS5 прокси"""
+        results = {}
+        proxy_url = f"socks5://{host}:{port}"
+
+        try:
+            connector = ProxyConnector.from_url(proxy_url)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+        except:
+            for name, _ in self.services:
+                results[name] = False
+
+        results["host"] = host
+        results["port"] = port
+        results["type"] = "direct"
+        results["proxy_url"] = proxy_url
+
+        return results
+
+    async def _validate_via_xray(self, proxy_dict: dict) -> dict:
+        """Запускает XRay и проверяет все сервисы"""
+        local_port = random.randint(10000, 60000)
+        host = proxy_dict["host"]
+        port = proxy_dict["port"]
+        uuid = proxy_dict["uuid"]
+
+        # Формируем конфиг для XRay (VLESS client)
+        config = {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {
+                    "port": local_port,
+                    "protocol": "socks",
+                    "settings": {"udp": True},
+                    "tag": "socks-inbound",
+                }
+            ],
+            "outbounds": [
+                {
+                    "protocol": "vless",
+                    "settings": {
+                        "vnext": [
+                            {
+                                "address": host,
+                                "port": port,
+                                "users": [{"id": uuid, "encryption": "none"}],
+                            }
+                        ]
+                    },
+                    "streamSettings": self._build_stream_settings(proxy_dict),
+                    "tag": "proxy",
+                }
+            ],
+        }
+
+        # Добавляем Reality настройки если есть
+        if proxy_dict.get("security") == "reality":
+            config["outbounds"][0]["streamSettings"]["realitySettings"] = {
+                "serverName": proxy_dict.get("sni", host),
+                "fingerprint": proxy_dict.get("fingerprint", "chrome"),
+                "publicKey": proxy_dict.get("pbk", ""),
+                "shortId": proxy_dict.get("sid", ""),
+            }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(config, f)
+            config_path = f.name
+
+        process = None
+        results = {}
+
+        try:
+            cmd = ["xray", "run", "-c", config_path]
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+            if not await self._wait_for_port(local_port):
+                return self._empty_result(host, port, uuid)
+
+            connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+
+            results["host"] = host
+            results["port"] = port
+            results["uuid"] = uuid
+            results["type"] = "vless"
+            results["proxy_url"] = f"socks5://{host}:{port}"
+
+            return results
+
+        except FileNotFoundError:
+            print("❌ xray не установлен! Установи: sudo pacman -S xray")
+            return self._empty_result(host, port, uuid)
+        except Exception as e:
+            print(f"❌ Ошибка VLESS валидации: {e}")
+            return self._empty_result(host, port, uuid)
+        finally:
+            if process and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except:
+                    process.kill()
+            try:
+                os.unlink(config_path)
+            except:
+                pass
+
+    def _build_stream_settings(self, proxy_dict: dict) -> dict:
+        """Строит streamSettings для XRay"""
+        security = proxy_dict.get("security", "tls")
+        settings = {"network": proxy_dict.get("type_protocol", "tcp")}
+
+        if settings["network"] == "ws":
+            settings["wsSettings"] = {}
+            if proxy_dict.get("path"):
+                settings["wsSettings"]["path"] = proxy_dict["path"]
+            if proxy_dict.get("host_header"):
+                settings["wsSettings"]["headers"] = {"Host": proxy_dict["host_header"]}
+
+        if security == "tls":
+            settings["security"] = "tls"
+            settings["tlsSettings"] = {
+                "serverName": proxy_dict.get("sni", proxy_dict["host"]),
+                "allowInsecure": True,
+            }
+        elif security == "reality":
+            settings["security"] = "reality"
+
+        return settings
+
+    def _empty_result(self, host: str, port: int, uuid: str = "") -> dict:
+        return {
+            "telegram": False,
+            "instagram": False,
+            "youtube": False,
+            "facebook": False,
+            "rutracker": False,
+            "zoomeye": False,
+            "whatsapp": False,
+            "host": host,
+            "port": port,
+            "uuid": uuid,
+            "type": "vless",
+            "proxy_url": f"socks5://{host}:{port}",
+        }
+
+    async def _wait_for_port(self, port: int, max_wait: int = 5) -> bool:
+        for _ in range(max_wait):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", port), timeout=1
+                )
+                writer.close()
+                return True
+            except:
+                await asyncio.sleep(1)
+        return False
+import asyncio
+import base64
+import json
+import re
+from urllib.parse import parse_qs, unquote, urlparse
+
+from worker_shadowsocks.mWorkerVless.checker.checker import CheckerVless
+
+# from worker_vless.checker.checker import CheckerVless
+from worker_shadowsocks.mWorkerVless.validator.validator import ValidatorVless
+
+
+def parse_vless_url(line: str) -> dict | None:
+    """
+    Парсит vless:// строку и возвращает словарь с host, port, и uuid (если есть).
+    """
+    line = line.strip()
+    if not line.startswith("vless://"):
+        return None
+
+    # 1. Убираем префикс и всё, что после '#'
+    raw = line[8:].split("#")[0]
+
+    # 2. Ищем UUID в начале строки
+    uuid_match = re.search(
+        r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
+        raw,
+        re.IGNORECASE,
+    )
+    if not uuid_match:
+        # Если UUID не найден, возможно, это не VLESS
+        return None
+
+    uuid = uuid_match.group(1)
+
+    # 3. Ищем хост и порт ПОСЛЕ UUID
+    # Шаблон: ищем либо IP-адрес, либо доменное имя, после которого идёт двоеточие и цифры порта
+    host_port_match = re.search(rf"{re.escape(uuid)}@([^:?]+):(\d+)", raw)
+    if not host_port_match:
+        return None
+
+    host = host_port_match.group(1)
+    port = int(host_port_match.group(2))
+
+    return {"host": host, "port": port, "uuid": uuid, "type": "vless"}
+
+
+async def cortiging_validtor(proxy, semaphore, validator, queue, queue_name):
+    data = await validator.validate_proxy(proxy, semaphore)
+    # await queue.put(data)
+    # return data
+    if data is not None:
+        item = {queue_name: data}  # ← используется переданное имя
+        await queue.put(item)
+    return data
+
+
+async def core_worker_vless(list_proxis, queue, queue_name):
+    """Основная функция для обработки VLESS прокси"""
+    import gc
+    import resource
+
+    # Увеличиваем лимит открытых файлов
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (4096, 4096))
+    except:
+        pass
+
+    semaphore = asyncio.Semaphore(3)  # ← уменьшено до 3
+    checker = CheckerVless()
+
+    # Парсим прокси
+    list_proxis_clean = []
+    for line in list_proxis:
+        try:
+            proxy = parse_vless_url(line)
+            if proxy and proxy.get("host"):
+                list_proxis_clean.append(proxy)
+        except Exception as e:
+            print(f"Ошибка парсинга VLESS: {e}")
+            continue
+
+    print(f"✅ Распарсено VLESS прокси: {len(list_proxis_clean)}")
+
+    if not list_proxis_clean:
+        print("❌ Нет VLESS прокси для проверки")
+        await queue.put("Done")
+        return []
+
+    # Чекер (TCP проверка) — можно делать много параллельно
+    list_task_checker = []
+    for proxy in list_proxis_clean:
+        task = asyncio.create_task(checker.checker(proxy, semaphore))
+        list_task_checker.append(task)
+
+    result_checker = await asyncio.gather(*list_task_checker)
+
+    # Собираем живые прокси
+    list_alive = []
+    for proxy, is_alive in result_checker:
+        if is_alive:
+            list_alive.append(proxy)
+            print(f"✅ TCP жив: {proxy['host']}:{proxy['port']}")
+
+    print(f"📊 Живых VLESS прокси (TCP): {len(list_alive)}")
+
+    if not list_alive:
+        print("❌ Нет живых VLESS прокси для валидации")
+        await queue.put("Done")
+        return []
+
+    # ВАЖНО: обрабатываем батчами по 5-10 прокси
+    batch_size = 5
+    validator = ValidatorVless()
+
+    for i in range(0, len(list_alive), batch_size):
+        batch = list_alive[i : i + batch_size]
+        print(
+            f"\n📦 Батч {i//batch_size + 1}/{(len(list_alive) + batch_size - 1)//batch_size}"
+        )
+        print(f"   Прокси в батче: {len(batch)}")
+
+        tasks = []
+        for proxy in batch:
+            task = asyncio.create_task(
+                cortiging_validtor(proxy, semaphore, validator, queue, queue_name)
+            )
+            tasks.append(task)
+
+        batch_results = await asyncio.gather(*tasks)
+
+        # Считаем рабочие в батче
+        working = sum(
+            1 for r in batch_results if any(r.get(s) for s in ["telegram", "youtube"])
+        )
+        print(f"   ✅ Рабочих в батче: {working}")
+
+        # Даём системе отдохнуть
+        await asyncio.sleep(2)
+
+        # Принудительная сборка мусора
+        gc.collect()
+
+    await queue.put("Done")
+    print("✅ VLESS воркер завершён")
+    return []
+
+
+#
+# # Пример использования
+# if __name__ == "__main__":
+#     test_lines = [
+#         "vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?security=reality&pbk=xxx&sni=google.com&fp=chrome&sid=123",
+#         "vless://uuid@1.2.3.4:8443",
+#     ]
+#     for line in test_lines:
+#         print(parse_vless_url(line))
+import asyncio
+import random
+import subprocess
+from multiprocessing import Semaphore
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class CheckerShadowsocks:
+    def __init__(self, timeout: int = 8):
+        self.timeout = timeout
+        self._processes = []
+
+    async def checker(self, proxy_dict: dict, semaphore):
+        async with semaphore:
+            result = await self.check_proxy(proxy_dict, semaphore)
+            result_data = proxy_dict, result
+            # print(f"Result checker = {result_data[1]}, proxy = {result_data[0]}")
+            return result_data
+
+    async def check_proxy(self, proxy_dict: dict, semaphore) -> bool:
+        """
+        Проверяет Shadowsocks прокси
+
+        Принимает: {"host": "1.2.3.4", "port": 443, "type": "ss"}
+        Или: {"host": "1.2.3.4", "port": 443, "method": "...", "password": "...", "type": "ss"}
+        """
+
+        host = proxy_dict["host"]
+        port = proxy_dict["port"]
+        method = proxy_dict.get("method", "aes-256-gcm")
+        password = proxy_dict.get("password", "")
+
+        # Если нет пароля — только TCP проверка
+        if not password:
+
+            result = await self._tcp_check(host, port)
+            # print("Simele test", result)
+            return result
+        # Полная проверка через sslocal
+        result = await self._full_check(host, port, method, password)
+        # print("Full check", result)
+        return result
+
+    async def _tcp_check(self, host: str, port: int) -> bool:
+        """Простая TCP проверка (порт открыт или нет)"""
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=self.timeout
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except:
+            return False
+
+    async def _full_check(
+        self, host: str, port: int, method: str, password: str
+    ) -> bool:
+        """Полная проверка через sslocal"""
+        local_port = random.randint(10000, 60000)
+        server_url = f"ss://{method}:{password}@{host}:{port}"
+        local_addr = f"127.0.0.1:{local_port}"
+
+        process = None
+        try:
+            # Запускаем sslocal
+            cmd = [
+                "sslocal",
+                "--server-url",
+                server_url,
+                "--local-addr",
+                local_addr,
+                "-v",
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+            # Ждём запуска
+            if not await self._wait_for_port(local_port):
+                return False
+
+            # Проверяем через локальный SOCKS5
+            result = await self._check_via_socks(local_port)
+
+            # Убиваем процесс сразу после проверки
+            if process and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except:
+                    process.kill()
+
+            return result
+
+        except FileNotFoundError:
+            print("❌ sslocal не установлен")
+            if process and process.returncode is None:
+                process.terminate()
+            return False
+        except Exception as e:
+            if process and process.returncode is None:
+                process.terminate()
+            return False
+
+    async def _wait_for_port(self, port: int, max_wait: int = 5) -> bool:
+        """Ждёт, пока порт начнёт слушать"""
+        for _ in range(max_wait):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", port), timeout=1
+                )
+                writer.close()
+                return True
+            except:
+                await asyncio.sleep(1)
+        return False
+
+    async def _check_via_socks(self, local_port: int) -> bool:
+        """Проверяет через локальный SOCKS5"""
+        try:
+            connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
+            async with aiohttp.ClientSession(connector=connector) as session:
+                async with session.get(
+                    "http://httpbin.org/ip", timeout=self.timeout
+                ) as resp:
+                    return resp.status == 200
+        except:
+            return False
+
+    async def cleanup(self):
+        """Очищает процессы (на случай, если что-то осталось)"""
+        for process in self._processes:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except:
+                    process.kill()
+        self._processes.clear()
+import asyncio
+import random
+import subprocess
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class ValidatorShadowsocks:
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+
+        # Список сервисов для проверки
+        self.services = [
+            ("telegram", "http://t.me"),
+            ("instagram", "http://instagram.com"),
+            ("youtube", "http://youtube.com"),
+            ("facebook", "http://facebook.com"),
+            ("rutracker", "http://rutracker.org"),
+            ("zoomeye", "https://api.zoomeye.org"),
+            ("whatsapp", "http://web.whatsapp.com"),
+        ]
+
+    async def validate_proxy(self, proxy_dict: dict, semaphore) -> dict:
+        """
+        Проверяет доступность сервисов через прокси
+
+        Принимает: {"host": "1.2.3.4", "port": 443, "type": "ss"}
+        Возвращает: {"telegram": True/False, "youtube": True/False, ...}
+        """
+        async with semaphore:
+            host = proxy_dict["host"]
+            port = proxy_dict["port"]
+            method = proxy_dict.get("method", "")
+            password = proxy_dict.get("password", "")
+
+            # Если есть пароль и метод — проверяем через Shadowsocks
+            if password and method:
+                result = await self._validate_via_sslocal(host, port, method, password)
+                # print(f"✅ SS валидация для {host}:{port} - {result}")
+                return result
+
+            # Если нет пароля — пробуем как обычный SOCKS5/HTTP прокси
+            else:
+                result = await self._validate_via_direct(host, port)
+                # print(f"✅ Прямая валидация для {host}:{port} - {result}")
+                return result
+
+    async def _validate_via_direct(self, host: str, port: int) -> dict:
+        """Проверяет прокси как обычный SOCKS5 или HTTP"""
+        results = {}
+
+        # Пробуем как SOCKS5
+        proxy_url = f"socks5://{host}:{port}"
+        try:
+            connector = ProxyConnector.from_url(proxy_url)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+        except:
+            # Пробуем как HTTP прокси
+            proxy_url = f"http://{host}:{port}"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    for name, url in self.services:
+                        try:
+                            async with session.get(
+                                url, proxy=proxy_url, timeout=self.timeout, ssl=False
+                            ) as resp:
+                                results[name] = resp.status in (200, 301, 302)
+                        except:
+                            results[name] = False
+            except:
+                for name, _ in self.services:
+                    results[name] = False
+
+        results["host"] = host
+        results["port"] = port
+        results["type"] = "direct"
+        results["proxy_url"] = proxy_url
+
+        return results
+
+    async def _validate_via_sslocal(
+        self, host: str, port: int, method: str, password: str
+    ) -> dict:
+        """Запускает sslocal и проверяет все сервисы"""
+        local_port = random.randint(10000, 60000)
+        server_url = f"ss://{method}:{password}@{host}:{port}"
+        local_addr = f"127.0.0.1:{local_port}"
+
+        process = None
+        results = {}
+
+        try:
+            # Запускаем sslocal
+            cmd = [
+                "sslocal",
+                "--server-url",
+                server_url,
+                "--local-addr",
+                local_addr,
+                "-v",
+            ]
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+            # Ждём запуска
+            if not await self._wait_for_port(local_port):
+                return self._empty_result(host, port, method, password)
+
+            # Проверяем все сервисы
+            connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+
+            # Возвращаем ВСЮ информацию
+            results["host"] = host
+            results["port"] = port
+            results["method"] = method
+            results["password"] = password
+            results["type"] = "ss"
+            results["proxy_url"] = f"socks5://{host}:{port}"
+
+            return results
+
+        except Exception as e:
+            return self._empty_result(host, port, method, password)
+        finally:
+            if process and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except:
+                    process.kill()
+
+    def _empty_result(
+        self, host: str, port: int, method: str = "", password: str = ""
+    ) -> dict:
+        """Возвращает пустой результат с сохранением информации о прокси"""
+        return {
+            "telegram": False,
+            "instagram": False,
+            "youtube": False,
+            "facebook": False,
+            "rutracker": False,
+            "zoomeye": False,
+            "whatsapp": False,
+            "host": host,
+            "port": port,
+            "method": method,
+            "password": password,
+            "type": "ss",
+            "proxy_url": f"socks5://{host}:{port}",
+        }
+
+    async def _wait_for_port(self, port: int, max_wait: int = 5) -> bool:
+        """Ждёт, пока порт начнёт слушать"""
+        for _ in range(max_wait):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", port), timeout=1
+                )
+                writer.close()
+                return True
+            except:
+                await asyncio.sleep(1)
+        return False
+import asyncio
+import base64
+import re
+import warnings
+from unittest import result
+
+from worker_shadowsocks.mWorkerShadowsocs.checker.checker import CheckerShadowsocks
+from worker_shadowsocks.mWorkerShadowsocs.validator.validator import (
+    ValidatorShadowsocks,
+)
+
+
+def parse_ss_url(line: str) -> dict | None:
+    """
+    Парсит ss:// строку в словарь с host, port, method, password
+    Поддерживает форматы:
+    - Base64: ss://Y2hhY2hhMjA...@host:port
+    - Читаемый: ss://method:password@host:port
+    - Простой: ss://host:port
+    """
+    line = line.strip()
+
+    # Пропускаем строки с другими протоколами
+    if any(x in line for x in ["vmess://", "vless://", "trojan://", "ssr://"]):
+        return None
+
+    if not line.startswith("ss://"):
+        return None
+
+    # Убираем ss://
+    raw = line[5:]
+
+    # Убираем комментарий после #
+    if "#" in raw:
+        raw = raw.split("#")[0]
+
+    # Убираем параметры после ?
+    if "?" in raw:
+        raw = raw.split("?")[0]
+
+    # Убираем лишние символы в конце
+    raw = raw.rstrip("/")
+
+    # Подавляем warnings от base64
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+
+        # Пробуем декодировать Base64
+        try:
+            # Очищаем строку от мусора для Base64
+            b64_clean = re.sub(r"[^A-Za-z0-9+/=]", "", raw)
+            decoded = base64.b64decode(b64_clean).decode("utf-8")
+
+            # Формат: method:password@host:port
+            if "@" in decoded and ":" in decoded:
+                method_pass, host_port = decoded.split("@", 1)
+                method, password = method_pass.split(":", 1)
+                host, port = host_port.rsplit(":", 1)
+                return {
+                    "host": host,
+                    "port": int(port),
+                    "method": method,
+                    "password": password,
+                    "type": "ss",
+                }
+        except:
+            pass
+
+    # Формат: method:password@host:port (читаемый)
+    match = re.match(r"([^:]+):([^@]+)@([^:]+):(\d+)", raw)
+    if match:
+        return {
+            "host": match.group(3),
+            "port": int(match.group(4)),
+            "method": match.group(1),
+            "password": match.group(2),
+            "type": "ss",
+        }
+
+    # Формат: host:port (простой)
+    match = re.search(r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[a-zA-Z0-9\.\-]+):(\d+)", raw)
+    if match:
+        host = match.group(1)
+        # Пропускаем если host похож на метод шифрования
+        if host not in [
+            "aes-256-cfb",
+            "aes-256-gcm",
+            "chacha20",
+            "chacha20-ietf-poly1305",
+        ]:
+            return {"host": host, "port": int(match.group(2)), "type": "ss"}
+
+    return None
+
+
+## clen
+## check
+## validate
+## get out data
+async def validata_corteg(i, semaphore, validator, queue, queue_name):
+    data = await validator.validate_proxy(i, semaphore)
+    if data is not None:
+        item = {queue_name: data}  # ← используется переданное имя
+        await queue.put(item)
+
+
+async def core_woreker_shadowsocks(list_proxis, queue, queue_name):
+    semaphore = asyncio.Semaphore(150)
+    checker = CheckerShadowsocks()
+
+    list_proxis_clean = []
+    for i in list_proxis:
+        proxy = parse_ss_url(i)
+        if proxy == None:
+            continue
+        list_proxis_clean.append(proxy)
+
+    for i, proxy in enumerate(list_proxis_clean):
+        if proxy == None:
+            del list_proxis_clean[i]
+
+    list_task_checker = []
+
+    chunks = [
+        list_proxis_clean[i : i + 1000] for i in range(0, len(list_proxis_clean), 1000)
+    ]
+    print(len(chunks))
+    # for i in chunks:
+    #     for i in i:
+    #         print(i)
+    for i in chunks:
+        for i in i:
+            task = asyncio.create_task(checker.checker(i, semaphore))
+            list_task_checker.append(task)
+
+    result = await asyncio.gather(*list_task_checker)
+    list_alive = []
+    for i in result:
+        if i[1] == True:
+            list_alive.append(i[0])
+
+    validator = ValidatorShadowsocks()
+    list_task_validator = []
+    for i in list_alive:
+        task = asyncio.create_task(
+            validata_corteg(i, semaphore, validator, queue, queue_name)
+        )
+        list_task_validator.append(task)
+
+    if list_task_validator:  # ← проверяем, что есть задачи
+        result_validator = await asyncio.gather(*list_task_validator)
+        # print(result_validator)
+    await queue.put("Done")
+    # print(f"Alive proxy shadowsocks is {len(list_alive)}")
+import asyncio
+from asyncio.tasks import FIRST_COMPLETED
+
+import aiohttp
+
+from worker_shadowsocks.getData.datagit import GitHttp
+from worker_shadowsocks.mWorkerShadowsocs.core.core import core_woreker_shadowsocks
+from worker_shadowsocks.mWorkerTrojan.core.core import core_worker_trojan
+from worker_shadowsocks.mWorkerVless.core.core import core_worker_vless
+from worker_shadowsocks.mWorkerVmell.core.core import core_worker_vmess
+
+
+async def sontering_(queue, name):
+    print(f"🔍 Обработчик {name} запущен")
+    while True:
+        data = await queue.get()
+        if data == "Done":
+            print(f"✅ Обработчик {name} завершён")
+            break
+        print(f"📥 {name}: получено {len(data) if isinstance(data, list) else data}")
+        # item = {"https": data}
+        #     await queue_https.put(item)
+
+
+async def core(sources_mix, queue_dict):
+    """Собирает прокси из источников и распределяет по очередям"""
+    session = aiohttp.ClientSession()
+    get_data = GitHttp()
+
+    list_ss_proxis = []
+    list_trojan_proxis = []
+    list_vless_proxis = []
+    list_vmess_proxis = []
+
+    for source in sources_mix:
+        list_proxis = await get_data.get_content(source, session)
+        for line in list_proxis:
+            if line.startswith("ss://"):
+                list_ss_proxis.append(line)
+            elif line.startswith("trojan://"):
+                list_trojan_proxis.append(line)
+            elif line.startswith("vless://"):
+                list_vless_proxis.append(line)
+            elif line.startswith("vmess://"):
+
+                list_vmess_proxis.append(line)
+
+    print(f"Найдено shadowsocks прокси = {len(list_ss_proxis)}")
+    print(f"Найдено trojan прокси = {len(list_trojan_proxis)}")
+    print(f"Найдено vless прокси = {len(list_vless_proxis)}")
+    print(f"Найдено vmess прокси = {len(list_vmess_proxis)}")
+
+    # Запускаем воркеров
+    workers = [
+        asyncio.create_task(
+            core_woreker_shadowsocks(
+                list_ss_proxis, queue_dict["shadowsocks"], "shadowsocks"
+            )
+        ),
+        asyncio.create_task(
+            core_worker_trojan(list_trojan_proxis, queue_dict["trojan"], "trojan")
+        ),
+        # asyncio.create_task(
+        #    core_worker_vless(list_vless_proxis, queue_dict["vless"], "vless")
+        # ),
+        # asyncio.create_task(
+        #   core_worker_vmess(list_vmess_proxis, queue_dict["vmess"], "vmess")
+        # ),
+    ]
+
+    await asyncio.gather(*workers)
+    await session.close()
+
+
+async def worker_shadowsocks_main(
+    sources_mix, queue_shadowsocks_mix, queue_trojan, queue_vless, queue_vmess
+):
+    sources = sources_mix
+    groups = []
+
+    for i in range(0, len(sources), 2):
+        if i + 1 < len(sources):
+            groups.append([sources[i], sources[i + 1]])
+        else:
+            if groups:
+                groups[-1].append(sources[i])
+            else:
+                groups.append([sources[i]])
+
+    for i in groups:
+        print(len(i), i)
+
+    list_tasks = []
+    all_handlers = []  # ← собираем все обработчики
+
+    for group in groups:
+        # Создаём очереди для этой группы
+        queues = {
+            "shadowsocks": queue_shadowsocks_mix,
+            "trojan": queue_trojan,
+            "vless": queue_vless,
+            "vmess": queue_vmess,
+        }
+
+        # Запускаем обработчики для этой группы
+        handlers = [
+            asyncio.create_task(sontering_(queues["shadowsocks"], f"shadowsocks_{i}")),
+            asyncio.create_task(sontering_(queues["trojan"], f"trojan_{i}")),
+            # asyncio.create_task(sontering_(queues["vless"], f"vless_{i}")),
+            # asyncio.create_task(sontering_(queues["vmess"], f"vmess_{i}")),
+        ]
+        all_handlers.extend(handlers)  # ← сохраняем обработчики
+
+        # Запускаем core для этой группы
+        task = asyncio.create_task(core(group, queues))
+        list_tasks.append(task)
+
+    # Ждём завершения всех core задач
+    pending = set(list_tasks)
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=FIRST_COMPLETED)
+        for task in done:
+            result = task.result()
+            print(f"Завершена core задача, осталось: {len(pending)}")
+
+    # После завершения всех core задач, отправляем сигнал "Done" во все очереди
+    # и ждём завершения обработчиков
+    print(
+        "✅ Все core задачи shadowsocks завершены, ожидаем завершения обработчиков..."
+    )
+
+    # Ждём завершения всех обработчиков
+    await asyncio.gather(*all_handlers)
+
+    await queue_shadowsocks_mix.put("Done")
+    print("✅ worker_shadowsocks_main завершён")
+
+
+# SS_SOURCES_MIX = [
+#     # === Основные, проверенные источники ===
+#     "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/ss.txt",
+#     "https://raw.githubusercontent.com/pourih/pfs-servers-list/refs/heads/main/pfs_servers.txt",
+#     "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/1.txt",
+#     # === Новые, мощные источники ===
+#     # "https://raw.githubusercontent.com/gfpcom/free-proxy-list/master/lists/ss.txt",
+#     "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/ss_configs.txt",
+#     "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/ss.txt",
+#     "https://raw.githubusercontent.com/ShatakVPN/ConfigForge-V2Ray/main/configs/shadowsocks.txt",
+#     "https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/refs/heads/main/splitted-by-protocol/shadowsocks.txt",
+# ]
+
+#
+# async def main():
+#     queue_final = asyncio.Queue()
+#     await worker_shadowsocks_main(SS_SOURCES_MIX, queue_final)
+#
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())
+import asyncio
+
+
+class CheckerVmess:
+    def __init__(self, timeout: int = 8):
+        self.timeout = timeout
+
+    async def checker(self, proxy_dict: dict, semaphore) -> tuple:
+        """Проверяет VMess прокси (TCP проверка)"""
+        async with semaphore:
+            result = await self._check_proxy(proxy_dict)
+            return (proxy_dict, result)
+
+    async def _check_proxy(self, proxy_dict: dict) -> bool:
+        """TCP проверка для VMess"""
+        host = proxy_dict["host"]
+        port = proxy_dict["port"]
+
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=self.timeout
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except:
+            return False
+import asyncio
+import json
+import os
+import random
+import subprocess
+import tempfile
+
+import aiohttp
+from aiohttp_socks import ProxyConnector
+
+
+class ValidatorVmess:
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+
+        self.services = [
+            ("telegram", "http://t.me"),
+            ("instagram", "http://instagram.com"),
+            ("youtube", "http://youtube.com"),
+            ("facebook", "http://facebook.com"),
+            ("rutracker", "http://rutracker.org"),
+            ("zoomeye", "https://api.zoomeye.org"),
+            ("whatsapp", "http://web.whatsapp.com"),
+        ]
+
+    async def validate_proxy(self, proxy_dict: dict, semaphore) -> dict:
+        """Проверяет VMess прокси через XRay"""
+        async with semaphore:
+            host = proxy_dict["host"]
+            port = proxy_dict["port"]
+            uuid = proxy_dict.get("uuid", "")
+
+            if not uuid:
+                return await self._validate_via_direct(host, port)
+
+            return await self._validate_via_xray(proxy_dict)
+
+    async def _validate_via_direct(self, host: str, port: int) -> dict:
+        """Проверяет как обычный SOCKS5 прокси"""
+        results = {}
+        proxy_url = f"socks5://{host}:{port}"
+
+        try:
+            connector = ProxyConnector.from_url(proxy_url)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+        except:
+            for name, _ in self.services:
+                results[name] = False
+
+        results["host"] = host
+        results["port"] = port
+        results["type"] = "direct"
+        results["proxy_url"] = proxy_url
+
+        return results
+
+    async def _validate_via_xray(self, proxy_dict: dict) -> dict:
+        """Запускает XRay и проверяет все сервисы"""
+        local_port = random.randint(10000, 60000)
+        host = proxy_dict["host"]
+        port = proxy_dict["port"]
+        uuid = proxy_dict["uuid"]
+        network = proxy_dict.get("network", "tcp")
+
+        # Формируем конфиг для XRay (VMess client)
+        config = {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {
+                    "port": local_port,
+                    "protocol": "socks",
+                    "settings": {"udp": True},
+                    "tag": "socks-inbound",
+                }
+            ],
+            "outbounds": [
+                {
+                    "protocol": "vmess",
+                    "settings": {
+                        "vnext": [
+                            {
+                                "address": host,
+                                "port": port,
+                                "users": [
+                                    {
+                                        "id": uuid,
+                                        "security": proxy_dict.get("security", "auto"),
+                                        "alterId": proxy_dict.get("aid", 0),
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "streamSettings": self._build_stream_settings(proxy_dict),
+                    "tag": "proxy",
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(config, f)
+            config_path = f.name
+
+        process = None
+        results = {}
+
+        try:
+            cmd = ["xray", "run", "-c", config_path]
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+            if not await self._wait_for_port(local_port):
+                return self._empty_result(host, port, uuid)
+
+            connector = ProxyConnector.from_url(f"socks5://127.0.0.1:{local_port}")
+            async with aiohttp.ClientSession(connector=connector) as session:
+                for name, url in self.services:
+                    try:
+                        async with session.get(
+                            url, timeout=self.timeout, ssl=False
+                        ) as resp:
+                            results[name] = resp.status in (200, 301, 302)
+                    except:
+                        results[name] = False
+
+            results["host"] = host
+            results["port"] = port
+            results["uuid"] = uuid
+            results["type"] = "vmess"
+            results["proxy_url"] = f"socks5://{host}:{port}"
+
+            return results
+
+        except FileNotFoundError:
+            print("❌ xray не установлен! Установи: sudo pacman -S xray")
+            return self._empty_result(host, port, uuid)
+        except Exception as e:
+            print(f"❌ Ошибка VMess валидации: {e}")
+            return self._empty_result(host, port, uuid)
+        finally:
+            if process and process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except:
+                    process.kill()
+            try:
+                os.unlink(config_path)
+            except:
+                pass
+
+    def _build_stream_settings(self, proxy_dict: dict) -> dict:
+        """Строит streamSettings для XRay"""
+        network = proxy_dict.get("network", "tcp")
+        settings = {"network": network}
+
+        if network == "ws":
+            settings["wsSettings"] = {
+                "path": proxy_dict.get("path", "/"),
+                "headers": {},
+            }
+            if proxy_dict.get("host_header"):
+                settings["wsSettings"]["headers"]["Host"] = proxy_dict["host_header"]
+
+        if proxy_dict.get("security") == "tls":
+            settings["security"] = "tls"
+            settings["tlsSettings"] = {
+                "serverName": proxy_dict.get("sni", proxy_dict["host"]),
+                "allowInsecure": True,
+                "fingerprint": proxy_dict.get("fingerprint", "chrome"),
+            }
+
+        return settings
+
+    def _empty_result(self, host: str, port: int, uuid: str = "") -> dict:
+        return {
+            "telegram": False,
+            "instagram": False,
+            "youtube": False,
+            "facebook": False,
+            "rutracker": False,
+            "zoomeye": False,
+            "whatsapp": False,
+            "host": host,
+            "port": port,
+            "uuid": uuid,
+            "type": "vmess",
+            "proxy_url": f"socks5://{host}:{port}",
+        }
+
+    async def _wait_for_port(self, port: int, max_wait: int = 10) -> bool:
+        """Ждёт, пока порт начнёт слушать"""
+        for i in range(max_wait):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", port), timeout=2
+                )
+                writer.close()
+                print(f"✅ Порт {port} запустился за {i+1} сек")
+                return True
+            except:
+                await asyncio.sleep(1)
+        print(f"❌ Порт {port} не запустился за {max_wait} сек")
+        return False
+import asyncio
+import base64
+import json
+import re
+from urllib.parse import parse_qs, urlparse
+
+from worker_shadowsocks.mWorkerVmell.checker.checker import CheckerVmess
+from worker_shadowsocks.mWorkerVmell.validator.validator import ValidatorVmess
+
+# from worker_vmess.checker.checker import CheckerVmess
+# from worker_vmess.validator.validator import ValidatorVmess
+
+
+def parse_vmess_url(line: str) -> dict | None:
+    """
+    Парсит vmess:// строку в словарь
+
+    Формат: vmess://base64(json)
+    Пример: vmess://eyJhZGQiOiIxOTIuMTY4LjEuMSIsInBvcnQiOiI0NDMiLCJpZCI6IjEyMzQ1Njc4LTEyMzQtMTIzNC0xMjM0LTEyMzQ1Njc4OTAxMiIsImFpZCI6IjAiLCJuZXQiOiJ3cyIsInR5cGUiOiJub25lIiwiaG9zdCI6IiIsInBhdGgiOiIvIiwidGxzIjoiIn0=
+    """
+    line = line.strip()
+    if not line.startswith("vmess://"):
+        return None
+
+    # Убираем vmess://
+    raw = line[8:]
+
+    # Убираем комментарий после #
+    if "#" in raw:
+        raw = raw.split("#")[0]
+
+    # Убираем параметры после ?
+    if "?" in raw:
+        raw = raw.split("?")[0]
+
+    # Декодируем Base64
+    try:
+        # Добавляем padding если нужно
+        padding = 4 - (len(raw) % 4)
+        if padding != 4:
+            raw += "=" * padding
+
+        decoded = base64.b64decode(raw).decode("utf-8")
+        config = json.loads(decoded)
+
+        # Базовые параметры
+        result = {
+            "host": config.get("add", ""),
+            "port": int(config.get("port", 0)),
+            "uuid": config.get("id", ""),
+            "aid": int(config.get("aid", "0")),
+            "security": config.get("scy", "auto"),
+            "type": "vmess",
+        }
+
+        # Сетевые параметры
+        network = config.get("net", "tcp")
+        result["network"] = network
+
+        if network == "ws":
+            result["path"] = config.get("path", "/")
+            result["host_header"] = config.get("host", "")
+
+        # TLS параметры
+        tls = config.get("tls", "")
+        if tls == "tls":
+            result["security"] = "tls"
+            result["sni"] = config.get("sni", "")
+            result["fingerprint"] = config.get("fp", "chrome")
+            result["alpn"] = config.get("alpn", "http/1.1")
+
+        return result
+
+    except Exception as e:
+        print(f"Ошибка парсинга VMess: {e}")
+        return None
+
+
+async def sortiring(proxy, semaphore, validator, queue, queue_name):
+    data = await validator.validate_proxy(proxy, semaphore)
+    # await queue.put(data)
+    # return data
+    if data is not None:
+        item = {queue_name: data}  # ← используется переданное имя
+        await queue.put(item)
+    return data
+
+
+async def core_worker_vmess(list_proxis, queue, queue_name):
+    """Основная функция для обработки VMess прокси"""
+    import gc
+    import resource
+
+    # Увеличиваем лимит открытых файлов
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (4096, 4096))
+    except:
+        pass
+
+    semaphore = asyncio.Semaphore(3)  # ← было 50, стало 3
+    checker = CheckerVmess()
+
+    # Парсим прокси
+    list_proxis_clean = []
+    for line in list_proxis:
+        try:
+            proxy = parse_vmess_url(line)
+            if proxy and proxy.get("host") and proxy.get("port") and proxy.get("uuid"):
+                list_proxis_clean.append(proxy)
+        except Exception as e:
+            print(f"Ошибка парсинга VMess: {e}")
+            continue
+
+    print(f"✅ Распарсено VMess прокси: {len(list_proxis_clean)}")
+
+    if not list_proxis_clean:
+        print("❌ Нет VMess прокси для проверки")
+        await queue.put("Done")
+        return
+
+    # Чекер (TCP проверка) — можно много параллельно
+    list_task_checker = []
+    for proxy in list_proxis_clean:
+        task = asyncio.create_task(checker.checker(proxy, semaphore))
+        list_task_checker.append(task)
+
+    result_checker = await asyncio.gather(*list_task_checker)
+
+    # Собираем живые прокси (где TCP порт открыт)
+    list_alive = []
+    for proxy, is_alive in result_checker:
+        if is_alive:
+            list_alive.append(proxy)
+            print(f"✅ TCP жив: {proxy['host']}:{proxy['port']}")
+
+    print(f"📊 Живых VMess прокси (TCP): {len(list_alive)}")
+
+    if not list_alive:
+        print("❌ Нет живых VMess прокси для валидации")
+        await queue.put("Done")
+        return
+
+    # ВАЖНО: обрабатываем батчами по 5-10 прокси
+    batch_size = 5
+    validator = ValidatorVmess()
+
+    for i in range(0, len(list_alive), batch_size):
+        batch = list_alive[i : i + batch_size]
+        print(
+            f"\n📦 Батч {i//batch_size + 1}/{(len(list_alive) + batch_size - 1)//batch_size}"
+        )
+        print(f"   Прокси в батче: {len(batch)}")
+
+        tasks = []
+        for proxy in batch:
+            task = asyncio.create_task(
+                sortiring(proxy, semaphore, validator, queue, queue_name)
+            )
+            tasks.append(task)
+
+        batch_results = await asyncio.gather(*tasks)
+
+        # Считаем рабочие в батче
+        working = sum(
+            1 for r in batch_results if any(r.get(s) for s in ["telegram", "youtube"])
+        )
+        print(f"   ✅ Рабочих в батче: {working}")
+
+        # Даём системе отдохнуть
+        await asyncio.sleep(2)
+
+        # Принудительная сборка мусора
+        gc.collect()
+
+    await queue.put("Done")
+    print("✅ VMess воркер завершён")
+import asyncio
+
+import aiohttp
+
+
+class GitHttp:
+    async def get_content(self, source, session):
+        print(f"get {source}")
+        list_proxis = []
+        async with session.get(source) as response:
+            text = await response.text()
+            proxies = text.strip().split("\n")
+            # print(proxies, "\n")
+
+            for i in proxies:
+                list_proxis.append(i)
+                # print(f"apeend elemen {i}")
+        return list_proxis
+import asyncio
+import string
+
+
+class CheckerHttps:
+
+    async def check_proxy(self, host: str, port) -> bool:
+        """
+        proxy: "ip:port"
+        """
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, int(port)), timeout=7
+            )
+            writer.close()
+            await writer.wait_closed()
+            # print(f"host {host} is alive")
+            return True
+        except:
+            # print(f"host {host} is dead")
+            return False
+import asyncio
+import os
+import sys
+from asyncio.tasks import FIRST_COMPLETED
+from multiprocessing import Semaphore
+from sqlite3 import connect
+from unittest import result
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+import aiohttp
+from aiohttp import *
+from function.function import GitHttp
+from pydantic import validator
+from requests import session
+from validator.validator import Validator
+
+from worker_https.dopAbulity.abulity import CheckerHttps
+
+
+async def defalt_worker(source, gitHttp, session, Semaphore):
+    async with Semaphore:
+        print(f"work with {source}")
+
+        list_pro = await gitHttp.get_content(source, session)
+
+        return list_pro
+
+
+async def defalt_worker_checker(data_check, checker, session, Semaphore):
+    async with Semaphore:
+        host, port = data_check.split(":")
+        result = await checker.check_proxy(host, port)
+        data_result = [host, port, result]
+        return data_result
+
+
+async def defalt_worker_validator(data_check_proxy, validator, session, Semaphore):
+    async with Semaphore:
+        host, port = data_check_proxy.split(":")
+
+        result_validate = await validator.check_proxy_target(host, port)
+    return result_validate
+
+
+async def tastManager(pul_source, session, Semaphore, condition):
+    list_tast_start = []
+    checker = CheckerHttps()
+    gitHttp = GitHttp()
+    validator = Validator()
+    if condition == "work_data":
+        for tast in pul_source:
+            task = asyncio.create_task(defalt_worker(tast, gitHttp, session, Semaphore))
+            list_tast_start.append(task)
+        return list_tast_start
+    elif condition == "checker":
+        for tast in pul_source:
+            task = asyncio.create_task(
+                defalt_worker_checker(tast, checker, session, Semaphore)
+            )
+            list_tast_start.append(task)
+        return list_tast_start
+    elif condition == "validator":
+        for proxy_data in pul_source:
+            if isinstance(proxy_data, list):
+                proxy_data = f"{proxy_data[0]}:{proxy_data[1]}"
+            task = asyncio.create_task(
+                defalt_worker_validator(proxy_data, validator, session, Semaphore)
+            )
+            list_tast_start.append(task)
+        return list_tast_start
+
+
+async def formateringData(data):
+    list_clean_data_zip = []
+    for i in data:
+        if i != None and len(i) > 1:
+            for item in i:
+                list_clean_data_zip.append(item)
+        else:
+            continue
+    return list_clean_data_zip
+
+
+async def initizilization(source_start, Semaphore, condition):
+    session = aiohttp.ClientSession()
+
+    globals_result = None
+    if condition == "work_data":
+        list_task = await tastManager(
+            source_start, session, Semaphore, condition=condition
+        )
+        if list_task != None:
+            result_task = await asyncio.gather(*list_task)
+            globals_result = result_task
+            await session.close()
+        else:
+            print("Error create task pul")
+    elif condition == "checker":
+        list_task = await tastManager(
+            source_start, session, Semaphore, condition=condition
+        )
+
+        if list_task != None:
+            result_task = await asyncio.gather(*list_task)
+            globals_result = result_task
+            await session.close()
+        else:
+            print("Error create task pul for checker")
+
+    elif condition == "validator":
+        list_task = await tastManager(
+            source_start, session, Semaphore, condition=condition
+        )
+        if list_task != None:
+            result_task_validator = await asyncio.gather(*list_task)
+            globals_result = result_task_validator
+            await session.close()
+        else:
+            print("Error create task pul for checker")
+
+    if condition == "work_data":
+        result_clean = await formateringData(result_task)
+
+        return result_clean
+
+    elif condition == "checker":
+        result_cheker = globals_result
+        await session.close()
+        return result_cheker
+    elif condition == "validator":
+        result_validate = result_task_validator
+        await session.close()
+        return result_validate
+
+
+async def core(source_work):
+    print(f"PodWorker startin with sources = {len(source_work)}")
+    list_test = ["work_data", "checker", "validator"]
+    result_working_data = None  # инициализируем
+    list_finally_validata_result = None
+    Semaphore = asyncio.Semaphore(150)
+    for i in list_test:
+        print(f"Stage = {i}")
+
+        if i == "work_data":
+            result_working_data = await initizilization(
+                source_work, Semaphore, condition=i
+            )
+            if result_working_data != None:
+                print(f"Данные получены: {len(result_working_data)} прокси")
+
+        elif i == "checker":
+
+            if result_working_data:
+                result_working_data = await initizilization(
+                    result_working_data, Semaphore, condition=i
+                )
+                # print("Результат проверки:")
+                if result_working_data != None:
+                    list_alive = []
+
+                    for proxy in result_working_data:
+                        if proxy[2] == True:
+                            list_alive.append(proxy)
+
+                    result_working_data = list_alive
+            else:
+                print("Нет данных для проверки")
+
+        elif i == "validator":
+            # print("Start validator")
+
+            if result_working_data:
+
+                list_clean_for_validate_stage = []
+                for proxy_2d in result_working_data:
+                    ip_port = f"{proxy_2d[0]}:{proxy_2d[1]}"
+                    # print(ip_port)
+                    list_clean_for_validate_stage.append(ip_port)
+
+                list_finally_validata_result = await initizilization(
+                    list_clean_for_validate_stage, Semaphore, condition=i
+                )
+                if list_finally_validata_result != None:
+
+                    print(f"PodWorker ending work with sources = {source_work}")
+                    # return result_working_validate
+
+                    return list_finally_validata_result
+
+
+async def worker_https(HTTPS_SOURCES, queue_https):
+    sources = HTTPS_SOURCES
+
+    groups = []
+
+    for i in range(0, len(sources), 2):
+        if i + 1 < len(sources):
+            # Есть пара
+            groups.append([sources[i], sources[i + 1]])
+        else:
+            # Одинокий элемент — добавляем к последней группе
+            if groups:
+                groups[-1].append(sources[i])
+            else:
+                groups.append([sources[i]])
+
+    for i in groups:
+        print(len(i), i)
+
+    list_tasks = []
+    for i in groups:
+        task = asyncio.create_task(core(i))
+        list_tasks.append(task)
+    # task = asyncio.create_task(core(list_one))
+    # task2 = asyncio.create_task(core(list_two))
+    pending = set(list_tasks)  # все задачи
+    results = []
+
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=FIRST_COMPLETED)
+        for task in done:
+            result = task.result()
+            results.append(result)
+            #         await queue_https.put(result)
+            #         print(f"Завершено,данные отданы, осталось: {len(pending)}")
+            # await queue_https.put("Done")
+            item = {"https": result}
+            await queue_https.put(item)
+            print(f"Завершено,данные отданы, осталось: {len(pending)}")
+    await queue_https.put("Done")
+
+
+# asyncio.run(main())
+#!/usr/bin/env python3
+import asyncio
+from typing import List, Optional, Tuple
+
+import aiohttp
+
+
+class ProxyValidator:
+    def __init__(self, target_url: str = "http://t.me", timeout: int = 5):
+        self.target_url = target_url
+        self.timeout = timeout
+
+    async def check_proxy(self, host: str, port: str) -> bool:
+        """Проверяет прокси через целевой ресурс"""
+        proxy_url = f"http://{host}:{port}"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self.target_url,
+                    proxy=proxy_url,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                    ssl=False,
+                ) as resp:
+                    return resp.status in (200, 301, 302, 307, 308)
+        except Exception as e:
+            # print(f"Ошибка {host}:{port} -> {type(e).__name__}")
+            return False
+
+    async def check_batch(
+        self, proxies: List[Tuple[str, str]]
+    ) -> List[Tuple[str, str, bool]]:
+        """Проверяет список прокси параллельно"""
+        semaphore = asyncio.Semaphore(50)  # ограничение одновременных проверок
+
+        async def check_one(host, port):
+            async with semaphore:
+                result = await self.check_proxy(host, port)
+                return (host, port, result)
+
+        tasks = [check_one(host, port) for host, port in proxies]
+        results = await asyncio.gather(*tasks)
+        return results
+
+
+async def main():
+    # Данные прокси (из твоего вывода)
+    proxies_data = [
+        ("77.76.202.157", "80"),
+        ("149.56.12.18", "80"),
+        ("216.117.195.93", "80"),
+        ("204.57.112.5", "80"),
+        ("147.161.210.140", "8800"),
+        ("178.212.144.7", "80"),
+        ("149.56.35.153", "80"),
+        ("20.78.26.206", "8561"),
+        ("45.12.151.226", "2829"),
+        ("95.213.217.168", "52004"),
+        ("185.135.69.34", "80"),
+        ("103.125.31.222", "80"),
+        ("51.68.124.241", "80"),
+        ("13.230.49.39", "8080"),
+        ("167.103.31.122", "8800"),
+        ("43.200.30.144", "80"),
+        ("45.140.147.82", "1082"),
+        ("221.132.18.38", "80"),
+        ("83.142.126.147", "80"),
+        ("180.250.219.58", "53281"),
+        ("167.103.144.127", "8800"),
+        ("43.252.214.195", "80"),
+        ("185.187.92.42", "80"),
+        ("43.99.54.236", "5555"),
+        ("51.79.135.131", "8080"),
+        ("34.96.238.40", "8080"),
+        ("191.101.1.116", "80"),
+        ("16.163.88.228", "80"),
+        ("141.98.153.86", "80"),
+        ("160.191.17.64", "8888"),
+    ]
+
+    print(f"🔍 Проверка {len(proxies_data)} прокси через {target_url}")
+    print("=" * 60)
+
+    validator = ProxyValidator(target_url="http://t.me", timeout=5)
+    results = await validator.check_batch(proxies_data)
+
+    alive = []
+    dead = []
+
+    for host, port, status in results:
+        if status:
+            alive.append((host, port))
+            print(f"✅ {host}:{port} — ДОСТУПЕН")
+        else:
+            dead.append((host, port))
+            print(f"❌ {host}:{port} — НЕ ДОСТУПЕН")
+
+    print("\n" + "=" * 60)
+    print(f"📊 ИТОГО: {len(alive)} живых, {len(dead)} мёртвых")
+
+    # Сохраняем живые прокси
+    if alive:
+        with open("alive_proxies.txt", "w") as f:
+            for host, port in alive:
+                f.write(f"{host}:{port}\n")
+        print(f"💾 Живые прокси сохранены в alive_proxies.txt")
+
+
+if __name__ == "__main__":
+    target_url = "http://t.me"  # можно заменить на https://t.me, http://httpbin.org/ip
+    asyncio.run(main())
+import asyncio
+from asyncio.timeouts import timeout
+
+import aiohttp
+
+
+class Validator:
+
+    async def check_proxy_target(self, host, port):
+        proxy_url = f"https://{host}:{port}"
+        list_service = [
+            "http://t.me",
+            "http://instagram.com",  # Исправил опечатку: было instagramm.com
+            "http://youtube.com",
+            "http://facebook.com",
+            "http://rutracker.org",
+            "https://api.zoomeye.org",
+            "http://web.whatsapp.com",
+        ]
+
+        list_task = []
+        # Добавляем задачу для проверки t.me, как и для всех остальных
+        for service in list_service:
+            task = asyncio.create_task(self._check_url(proxy_url, service))
+            list_task.append(task)
+
+        # Ждём выполнения всех задач
+        results = await asyncio.gather(*list_task)
+
+        # Формируем и возвращаем словарь
+        data = {
+            "telegram": results[0],
+            "instagram": results[1],
+            "youtube": results[2],
+            "facebook": results[3],
+            "rutracker": results[4],
+            "zoomeye": results[5],
+            "whatsapp": results[6],
+            "host:port:type": proxy_url,
+        }
+        return data
+
+    async def _check_url(self, proxy_url, target_url):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    target_url,
+                    proxy=proxy_url,
+                    timeout=7,
+                    ssl=False,
+                    allow_redirects=True,
+                ) as resp:
+                    # 200 — OK
+                    # 301/302 — редирект, тоже OK
+                    # 400/405 — прокси не поддерживает этот тип запроса
+                    return resp.status in (200, 301, 302)
+        except Exception as e:
+            # print(f"except is {e}")
+            return False
+
+
+#
+# async def main():
+#     validator = Validator()
+#     with open(
+#         "/home/admin/programmer-project/pythonProject/proxy_generate/alive_proxies_http.txt",
+#         "r",
+#     ) as f:
+#         # content = f.read()
+#         lines = f.readlines()
+#     # print(content)
+#     for i in lines:
+#         host, port = i.split(":")
+#         # print(f"host = {host}, port = {port}")
+#         result = await validator.check_proxy_target(host, port)
+#         print(f"host = {host}, port = {port}, result = {result}")
+#
+#
+# asyncio.run(main())
+import asyncio
+
+
+class GitHttp:
+    async def get_content(self, source, session):
+        print(f"get {source}")
+        list_proxis = []
+        async with session.get(source) as response:
+            text = await response.text()
+            proxies = text.strip().split("\n")
+            # print(proxies, "\n")
+
+            for i in proxies:
+                list_proxis.append(i)
+                # print(f"apeend elemen {i}")
+        return list_proxis
+class MainSortiring:
+    def __init__(self, queue_http, queue_https, queue_socks, queue_shadowsocks):
+        self.data_http = []
+        self.data_https = []
+        self.data_socks = []
+        self.data_shadowsocks = []
+        self.queue_http = queue_http
+        self.queue_https = queue_https
+        self.queue_socks = queue_socks
+        self.queue_shadowsocks = queue_shadowsocks
+
+    async def main_sortiring(self, data):
+        data = data
+        if data is not None:
+            self.data_http.append(data)
+
+    async def data_previe(self):
+        for i in self.data_http:
+            print(i)
+import os
+import sys
+
+# Добавляем корневую папку проекта в путь поиска модулей
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Теперь импорты
+import asyncio
+
+from core.main_sortiring.main_sortiring_logic import MainSortiring
+from worker.my import worker_http
+from worker_https.my import worker_https
+from worker_shadowsocks.my import worker_shadowsocks_main
+from worker_socks.my import worker_socks5
+
+SS_SOURCES_MIX = [
+    # === Основные, проверенные источники ===
+    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/ss.txt",
+    "https://raw.githubusercontent.com/pourih/pfs-servers-list/refs/heads/main/pfs_servers.txt",
+    "https://raw.githubusercontent.com/nikita29a/FreeProxyList/main/mirror/1.txt",
+    # === Новые, мощные источники ===
+    # "https://raw.githubusercontent.com/gfpcom/free-proxy-list/master/lists/ss.txt",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/ss_configs.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/ss.txt",
+    "https://raw.githubusercontent.com/ShatakVPN/ConfigForge-V2Ray/main/configs/shadowsocks.txt",
+    "https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/refs/heads/main/splitted-by-protocol/shadowsocks.txt",
+]
+
+
+SOCKS5_SOURCES = [
+    "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+    "https://raw.githubusercontent.com/GoekhanDev/free-proxy-list/main/socks5.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/socks5.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt",
+]
+
+HTTP_SOURCES = [
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/GoekhanDev/free-proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://raw.githubusercontent.com/opsxcq/proxy-list/master/list.txt",
+    "https://raw.githubusercontent.com/ALIILAPRO/Proxy/refs/heads/main/http.txt",
+]
+HTTPS_SOURCES = [
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/HTTPS_RAW.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/refs/heads/main/proxies/https.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/refs/heads/master/https.txt",
+    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/https.txt",
+    "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-https.txt",
+    "https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/https.txt",
+    "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/refs/heads/main/proxies/https.txt",
+]
+
+
+async def process_queue_http(queue_http):
+    while True:
+        item = await queue_http.get()
+        if "http" in item and item["http"] == None:
+            print("found none")
+            continue
+        elif "http" in item and len(item["http"]) > 1:
+            print("found data for work")
+            data = item["http"]
+            await soctereding(data)
+        if item == "Done":
+            print("End for working http")
+            break
+
+
+async def process_queue_https(queue_https):
+    while True:
+        item = await queue_https.get()
+        if "https" in item and item["https"] == None:
+            print("found none")
+            continue
+        elif "https" in item and len(item["https"]) > 1:
+            print("found data for work")
+            data = item["https"]
+            await soctereding(data)
+        if item == "Done":
+            print("End for working https")
+            break
+
+
+async def process_queue_socks(queue_sosck):
+    while True:
+        item = await queue_sosck.get()
+        if "socks" in item and item["socks"] == None:
+            print("found none")
+            continue
+        elif "socks" in item and len(item["socks"]) > 1:
+            print("found data for work")
+            data = item["socks"]
+            await soctereding(data)
+        if item == "Done":
+            print("End for working socks ")
+            break
+
+
+async def process_queue_shadowsocks(queue_shadowsocks, sborhic):
+    while True:
+        item = await queue_shadowsocks.get()
+        if "shadowsocks-mix" in item and item["shadowsocks-mix"] == None:
+            print("found none")
+            continue
+        elif "shadowsocks-mix" in item and len(item["shadowsocks-mix"]) > 1:
+            print("found data for work")
+            data = item["shadowsocks-mix"]
+            data_sort = await soctereding(data)
+            await sborhic.main_sortiring(data_sort)
+        if item == "Done":
+            print("End for working socks ")
+            break
+
+
+async def process_queue_trojan(queue_trojan):
+    while True:
+        item = await queue_trojan.get()
+
+        # Сначала проверяем сигнал завершения
+        if item == "Done":
+            print("End for working trojan")
+            break
+
+        # Потом обрабатываем данные
+        if isinstance(item, dict) and "trojan" in item:
+            data = item["trojan"]
+            if data is not None and len(data) > 0:
+                print("found data for work trojan")
+                if "trojan" in item:
+                    data = item["trojan"]  # достаём result из обёртки
+                    await soctereding(data)
+            else:
+                print("found none")
+        else:
+            print(f"⚠️ Неожиданный тип в очереди trojan: {type(item)}")
+
+
+async def process_queue_vless(queue_vless):
+    while True:
+        item = await queue_vless.get()
+
+        if item == "Done":
+            print("End for working vless")
+            break
+
+        if isinstance(item, dict) and "vless" in item:
+            data = item["vless"]
+            if data is not None and len(data) > 0:
+                print("found data for work vless")
+                await soctereding(data)
+            else:
+                print("found none")
+
+
+async def process_queue_vmess(queue_vmess):
+    while True:
+        item = await queue_vmess.get()
+
+        if item == "Done":
+            print("End for working vmess")
+            break
+
+        if isinstance(item, dict) and "vmess" in item:
+            data = item["vmess"]
+            if data is not None and len(data) > 0:
+                print("found data for work vmess")
+                await soctereding(data)
+            else:
+                print("found none")
+
+
+async def main_logic_sortiring(
+    queue_http,
+    queue_https,
+    queue_sosck,
+    queue_shadowsocks,
+    queue_trojan,
+    queue_vless,
+    queue_vmess,
+    obj_main_sborhic,
+):
+    task_http = asyncio.create_task(process_queue_http(queue_http))
+    task_https = asyncio.create_task(process_queue_https(queue_https))
+    task_socks = asyncio.create_task(process_queue_socks(queue_sosck))
+    task_shadowsocks = asyncio.create_task(
+        process_queue_shadowsocks(queue_shadowsocks, obj_main_sborhic)
+    )
+    task_trojan = asyncio.create_task(process_queue_trojan(queue_trojan))
+    # task_vless = asyncio.create_task(process_queue_vless(queue_vless))
+    # task_vmess = asyncio.create_task(process_queue_vmess(queue_vmess))
+    await asyncio.gather(
+        *[
+            task_http,
+            task_https,
+            task_socks,
+            task_shadowsocks,
+            task_trojan,
+            # task_vless,
+            # task_vmess,
+        ]
+    )
+
+
+async def soctereding(data):
+    list_first_order = []  # 1 сервис
+    list_second_order = []  # 2 сервиса
+    list_third_order = []  # 3 сервиса
+    list_fourth_order = []  # 4 сервиса
+    list_fifth_order = []  # 5 сервисов
+    list_sixth_order = []  # 6 сервисов
+    combined = data
+
+    for item in combined:
+        proxy_url = item.get("host:port:type")
+
+        # Считаем количество работающих сервисов
+        services_status = [
+            ("telegram", item.get("telegram")),
+            ("instagram", item.get("instagram")),
+            ("youtube", item.get("youtube")),
+            ("facebook", item.get("facebook")),
+            ("rutracker", item.get("rutracker")),
+            ("zoomeye", item.get("zoomeye")),
+        ]
+
+        # Подсчёт работающих сервисов
+        working_services = [
+            (name, status) for name, status in services_status if status
+        ]
+        count = len(working_services)
+
+        if count > 0:
+            proxy_info = {
+                "proxy": proxy_url,
+                "working_services": working_services,
+                "count": count,
+            }
+
+            # Сортируем по количеству
+            if count == 1:
+                list_first_order.append(proxy_info)
+            elif count == 2:
+                list_second_order.append(proxy_info)
+            elif count == 3:
+                list_third_order.append(proxy_info)
+            elif count == 4:
+                list_fourth_order.append(proxy_info)
+            elif count == 5:
+                list_fifth_order.append(proxy_info)
+            elif count == 6:
+                list_sixth_order.append(proxy_info)
+
+    # Вывод статистики
+    print("\n" + "=" * 60)
+    print("📊 СОРТИРОВКА ПРОКСИ ПО ПОРЯДКУ")
+    print("=" * 60)
+    print(f"🎯 1 порядок (1 сервис):  {len(list_first_order)} прокси")
+    print(f"🎯 2 порядок (2 сервиса): {len(list_second_order)} прокси")
+    print(f"🎯 3 порядок (3 сервиса): {len(list_third_order)} прокси")
+    print(f"🎯 4 порядок (4 сервиса): {len(list_fourth_order)} прокси")
+    print(f"🎯 5 порядок (5 сервисов): {len(list_fifth_order)} прокси")
+    print(f"🎯 6 порядок (6 сервисов): {len(list_sixth_order)} прокси")
+    print("=" * 60)
+    print(len(data))
+    return {
+        "1": list_first_order,
+        "2": list_second_order,
+        "3": list_third_order,
+        "4": list_fourth_order,
+        "5": list_fifth_order,
+        "6": list_sixth_order,
+    }
+
+
+async def main(SOCKS5_SOURCES, HTTP_SOURCES, HTTPS_SOURCES, SS_SOURCES_MIX):
+    queue_http = asyncio.Queue()
+    queue_https = asyncio.Queue()
+    queue_sosck = asyncio.Queue()
+    queue_shadowsocks = asyncio.Queue()
+    queue_trojan = asyncio.Queue()
+    queue_vless = asyncio.Queue()
+    queue_vmess = asyncio.Queue()
+    main_sortiring = MainSortiring(
+        queue_http, queue_https, queue_sosck, queue_shadowsocks
+    )
+
+    task_so = asyncio.create_task(worker_socks5(SOCKS5_SOURCES, queue_sosck))
+    task_http = asyncio.create_task(worker_http(HTTP_SOURCES, queue_http))
+    task_https = asyncio.create_task(worker_https(HTTPS_SOURCES, queue_https))
+    task_shadowsocks = asyncio.create_task(
+        worker_shadowsocks_main(
+            SS_SOURCES_MIX, queue_shadowsocks, queue_trojan, queue_vless, queue_vmess
+        )
+    )
+
+    task_sortering = asyncio.create_task(
+        main_logic_sortiring(
+            queue_http,
+            queue_https,
+            queue_sosck,
+            queue_shadowsocks,
+            queue_trojan,
+            queue_vless,
+            queue_vmess,
+            main_sortiring,
+        )
+    )
+
+    result_task = await asyncio.gather(
+        task_http, task_https, task_so, task_sortering, task_shadowsocks
+    )
+
+    # task_main_sortiring = asyncio.create_task(main_sortiring.main_sortiring())
+    # await asyncio.gather(task_main_sortiring)
+
+    await main_sortiring.data_previe()
+
+
+if __name__ == "__main__":
+    asyncio.run(main(SOCKS5_SOURCES, HTTP_SOURCES, HTTPS_SOURCES, SS_SOURCES_MIX))

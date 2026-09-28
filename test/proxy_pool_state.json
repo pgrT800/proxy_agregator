@@ -1,0 +1,151 @@
+{
+  "timestamp": "2026-08-18T19:20:39.904041",
+  "pool": [
+    "65.108.103.19:80",
+    "188.165.199.207:80",
+    "12.50.107.220:80",
+    "16.62.123.236:3128",
+    "197.221.240.178:80",
+    "103.156.17.69:8818",
+    "54.206.129.120:9002",
+    "152.230.215.123:80",
+    "120.78.191.225:80",
+    "197.221.234.252:80",
+    "191.44.125.9:8080",
+    "43.133.128.153:16012",
+    "65.20.230.118:9090",
+    "180.191.232.48:5050",
+    "47.107.82.96:30051",
+    "38.75.82.220:999"
+  ],
+  "stats": {
+    "65.108.103.19:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 332.6,
+      "country": "Finland",
+      "supports_https": false
+    },
+    "188.165.199.207:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 465.0,
+      "country": "France",
+      "supports_https": false
+    },
+    "12.50.107.220:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 477.0,
+      "country": "United States",
+      "supports_https": false
+    },
+    "16.62.123.236:3128": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 617.7,
+      "country": "Switzerland",
+      "supports_https": false
+    },
+    "197.221.240.178:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 1261.0,
+      "country": "Zimbabwe",
+      "supports_https": false
+    },
+    "103.156.17.69:8818": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 1502.5,
+      "country": "Russia",
+      "supports_https": false
+    },
+    "54.206.129.120:9002": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 1617.3,
+      "country": "Australia",
+      "supports_https": false
+    },
+    "152.230.215.123:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 1970.5,
+      "country": "Chile",
+      "supports_https": false
+    },
+    "120.78.191.225:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 2825.3,
+      "country": "China",
+      "supports_https": false
+    },
+    "197.221.234.252:80": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 3123.2,
+      "country": "Zimbabwe",
+      "supports_https": false
+    },
+    "191.44.125.9:8080": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 3161.1,
+      "country": "Russia",
+      "supports_https": false
+    },
+    "43.133.128.153:16012": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 3214.7,
+      "country": "Indonesia",
+      "supports_https": false
+    },
+    "65.20.230.118:9090": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 3655.2,
+      "country": "Russia",
+      "supports_https": false
+    },
+    "180.191.232.48:5050": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 4084.9,
+      "country": "Russia",
+      "supports_https": false
+    },
+    "47.107.82.96:30051": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 4687.0,
+      "country": "China",
+      "supports_https": false
+    },
+    "38.75.82.220:999": {
+      "last_used": null,
+      "success_count": 0,
+      "fail_count": 0,
+      "response_time": 5332.7,
+      "country": "Russia",
+      "supports_https": false
+    }
+  }
+}
